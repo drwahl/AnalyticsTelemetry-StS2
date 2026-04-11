@@ -1,0 +1,57 @@
+name: Bug report
+description: Something is wrong with the mod or its tooling
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to report a bug. Please include versions and logs where possible.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Short description of the bug or unexpected behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: What did you do before it happened?
+    validations:
+      required: false
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: false
+
+  - type: input
+    id: game-version
+    attributes:
+      label: Game / build (if known)
+      placeholder: e.g. Steam build date or version string
+    validations:
+      required: false
+
+  - type: input
+    id: mod-version
+    attributes:
+      label: AnalyticsTelemetry version
+      description: From `AnalyticsTelemetry.json` or in-game mod list.
+      placeholder: e.g. v0.6.19
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / diagnostics
+      description: |
+        Search `user://logs/godot*.log` (e.g. `~/.local/share/SlayTheSpire2/logs/` on Linux) for
+        `AnalyticsTelemetry diagnostics:` and any `Error loading mod AnalyticsTelemetry` lines.
+    validations:
+      required: false

@@ -1,5 +1,7 @@
 # AnalyticsTelemetry (Slay the Spire 2 mod)
 
+MIT license — see [LICENSE](LICENSE).
+
 Source for a Nexus-style mod package: one folder under the game’s `mods` directory with `AnalyticsTelemetry.json` and `AnalyticsTelemetry.dll` (and optionally `AnalyticsTelemetry.pck` when `has_pck` is true in the manifest). This repository lives **next to** the game install (`mod-analytics-telemetry/`) so nothing in the shipped `data_sts2_*` tree is edited—only `mods/` receives build output.
 
 ## Prerequisites
@@ -22,6 +24,31 @@ For a full package including `.pck` (localization/assets changed), set `GodotPat
 ```bash
 dotnet publish -c Release
 ```
+
+## Compatibility
+
+| Area | Notes |
+|------|--------|
+| **Game** | Targets **Slay the Spire 2** with the current Megadot / modding stack on Steam. Major game patches can break Harmony patches or publicized APIs until updated. |
+| **BaseLib** | Install the **`BaseLib` folder** from [BaseLib-StS2 releases](https://github.com/Alchyr/BaseLib-StS2/releases) under `mods/BaseLib/`. The DLL there must be the **same file** the game loads; compiling this mod against a different BaseLib assembly version causes load failures (see Prerequisites). |
+| **.NET** | **[.NET 9](https://dotnet.microsoft.com/download)** SDK — matches `TargetFramework` in `AnalyticsTelemetry.csproj`. Keep `<Version>` in that file in sync with `"version"` in `AnalyticsTelemetry.json`. |
+| **Godot (optional)** | **Godot 4.5.1** Mono for `dotnet publish` / `.pck` export (`Godot.NET.Sdk` in the project). Not required for `dotnet build` when you are not changing packaged resources. |
+
+## Privacy and data export
+
+- **Local NDJSON** — Append-only session files under the game user data tree (`OS.GetUserDataDir()` … `AnalyticsTelemetry/sessions/`). You can delete them anytime; they are not uploaded unless you copy them yourself.
+- **Run saves** — The mod reads Steam profile `current_run*.save` files to derive map room counts, gold, and related aggregates. **Steam account directory names are not written verbatim** in telemetry; a short hash is used where a stable id is needed (see runtime docs below).
+- **Remote export** — Optional HTTP / Influx-style sinks (mod **Settings → Export**) send only what you configure, and only when enabled. Treat export URLs and tokens like any other secret.
+
+## Automated tests
+
+Does not require the game install or BaseLib (uses `GodotSharp` on NuGet only for `Godot.Color` in shared model types):
+
+```bash
+dotnet test tests/AnalyticsTelemetry.UnitTests/AnalyticsTelemetry.UnitTests.csproj -c Release
+```
+
+**CI:** pushes and PRs to `main` / `master` run this test project (`.github/workflows/ci.yml`). **Tag releases** (`v*`) run tests and attach a **source zip** to the GitHub Release (`.github/workflows/release.yml`). GitHub-hosted runners do not have your game copy, so **prebuilt `AnalyticsTelemetry.dll` zips** are produced locally (see below).
 
 ## Runtime output
 
@@ -89,6 +116,13 @@ The mod registers a **BaseLib** `SimpleModConfig` screen (same pipeline as other
 - **Settings → Mods config missing** — Check the game log for `ModConfigRegistry.Register failed`. Registration runs on the first engine frame after init; if it still fails, update BaseLib and ensure only one `BaseLib` folder exists under `mods/`.
 - **Mod name looks grey in Mod Settings** — BaseLib only lists mods that registered a `ModConfig` with at least one persisted static setting (`HasSettings()`). This project includes a tiny internal sentinel property so registration succeeds while the screen stays fully custom-built.
 
-## Sharing (Nexus / Discord)
+## Sharing (Nexus / Discord / GitHub)
 
-Zip the **`AnalyticsTelemetry`** folder inside `mods` (dll + json, plus `.pck` if you ship one). Depend on **BaseLib** (see `AnalyticsTelemetry.json`).
+1. `dotnet build -c Release` from this repo (next to the game install so output lands in `../mods/AnalyticsTelemetry/`).
+2. Zip that **`AnalyticsTelemetry`** folder (manifest + `AnalyticsTelemetry.dll`, plus `.pck` if `has_pck` is true). Depend on **BaseLib** (see `AnalyticsTelemetry.json`).
+
+Convenience (writes `dist/AnalyticsTelemetry-<version>.zip`):
+
+```bash
+./scripts/package-mod-zip.sh
+```

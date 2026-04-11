@@ -10,7 +10,7 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-        <DefaultItemExcludes>packages/**</DefaultItemExcludes>
+        <DefaultItemExcludes>$(DefaultItemExcludes);packages/**;tests/**</DefaultItemExcludes>
         <AppOutputBase>$(MSBuildProjectDirectory)\</AppOutputBase>
         <PathMap>$(AppOutputBase)=.\</PathMap>
         <RootNamespace>AnalyticsTelemetry</RootNamespace>
@@ -57,6 +57,7 @@
     <ItemGroup>
         <None Condition="Exists('Directory.Build.props')" Include="Directory.Build.props"/>
         <None Include=".gitignore" />
+        <None Include="LICENSE" />
         <None Include="AnalyticsTelemetry.json" />
         <None Include="project.godot"/>
         <None Include="AnalyticsTelemetry/**" />

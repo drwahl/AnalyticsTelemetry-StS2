@@ -70,7 +70,7 @@ internal static class MetricsVisualPanelFactory
             c.Free();
         AddHeaderLabels(headers, model, compactDetail);
 
-        var anyTsTexture = ChartsHostHasRenderableTimeSeries(charts, model, compactDetail, pres);
+        var anyTsTexture = ChartsHostHasRenderableTimeSeries(charts, model);
         foreach (var c in vol.GetChildren())
             c.Free();
         PopulateVolatileTail(vol, model, compactDetail, pres, anyTsTexture);
@@ -79,7 +79,14 @@ internal static class MetricsVisualPanelFactory
 
     private static void AddHeaderLabels(VBoxContainer headersHost, MetricsVisualModel model, bool compactDetail)
     {
-        foreach (var h in model.Headers)
+        var headers = model.Headers;
+        if (TryUpdateHeaderLabelsInPlace(headersHost, headers, compactDetail))
+            return;
+
+        foreach (var c in headersHost.GetChildren())
+            c.Free();
+
+        foreach (var h in headers)
         {
             var line = new Label
             {
@@ -92,12 +99,39 @@ internal static class MetricsVisualPanelFactory
         }
     }
 
+    /// <summary>Avoids freeing/recreating header labels when only their text changes (common during combat).</summary>
+    private static bool TryUpdateHeaderLabelsInPlace(
+        VBoxContainer headersHost,
+        IReadOnlyList<string> headers,
+        bool compactDetail)
+    {
+        if (headersHost.GetChildCount() != headers.Count)
+            return false;
+        if (headers.Count == 0)
+            return true;
+
+        var fontPx = compactDetail ? 11 : 12;
+        foreach (var c in headersHost.GetChildren())
+        {
+            if (c is not Label lab)
+                return false;
+            if (lab.GetThemeFontSize("font_size") != fontPx)
+                return false;
+        }
+
+        for (var i = 0; i < headers.Count; i++)
+        {
+            var lab = (Label)headersHost.GetChild(i);
+            var t = headers[i];
+            if (lab.Text != t)
+                lab.Text = t;
+        }
+
+        return true;
+    }
+
     /// <summary>True if charts host already has ≥1 rendered texture (matches full rebuild semantics).</summary>
-    private static bool ChartsHostHasRenderableTimeSeries(
-        VBoxContainer chartsHost,
-        MetricsVisualModel model,
-        bool compactDetail,
-        MetricsVisualUiOptions pres)
+    private static bool ChartsHostHasRenderableTimeSeries(VBoxContainer chartsHost, MetricsVisualModel model)
     {
         if (chartsHost.GetChildCount() == 0)
             return ModelLikelyHasTimeSeriesPlot(model);

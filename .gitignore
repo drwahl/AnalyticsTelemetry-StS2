@@ -5,3 +5,5 @@ obj/
 *.user
 *.suo
 .vs/
+dist/
+TestResults/
