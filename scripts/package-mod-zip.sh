@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # Zip the installable mod folder after `dotnet build -c Release`.
+# For build + zip in one step, use ./scripts/build-and-package.sh
 # Expects this repo next to the game: ../mods/AnalyticsTelemetry/
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -22,3 +23,6 @@ mkdir -p "${OUT_DIR}"
 
 ( cd "${GAME_MODS}" && zip -r -q "${OUT_ZIP}" . )
 echo "Wrote ${OUT_ZIP}"
+if command -v ls >/dev/null 2>&1; then
+  ls -lh "${OUT_ZIP}" 2>/dev/null || true
+fi

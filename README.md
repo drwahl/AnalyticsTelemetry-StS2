@@ -42,7 +42,7 @@ dotnet publish -c Release
 
 ## Automated tests
 
-Does not require the game install or BaseLib (uses `GodotSharp` on NuGet only for `Godot.Color` in shared model types):
+Does not require the game install or BaseLib (uses `GodotSharp` on NuGet only for `Godot.Color` in shared model types). Covers `MetricsVisualModel` signatures and `MetricsTimeSeriesMath` (sample count + hover interpolation):
 
 ```bash
 dotnet test tests/AnalyticsTelemetry.UnitTests/AnalyticsTelemetry.UnitTests.csproj -c Release
@@ -118,11 +118,20 @@ The mod registers a **BaseLib** `SimpleModConfig` screen (same pipeline as other
 
 ## Sharing (Nexus / Discord / GitHub)
 
-1. `dotnet build -c Release` from this repo (next to the game install so output lands in `../mods/AnalyticsTelemetry/`).
-2. Zip that **`AnalyticsTelemetry`** folder (manifest + `AnalyticsTelemetry.dll`, plus `.pck` if `has_pck` is true). Depend on **BaseLib** (see `AnalyticsTelemetry.json`).
+Keep this repo **next to** the game install so `dotnet build` copies into `../mods/AnalyticsTelemetry/`. The zip must contain that folder’s contents (manifest + `AnalyticsTelemetry.dll`, plus `.pck` if `has_pck` is true). Depend on **BaseLib** (see `AnalyticsTelemetry.json`).
 
-Convenience (writes `dist/AnalyticsTelemetry-<version>.zip`):
+### Scripts (local zip for manual Nexus upload)
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/build-release.sh` | `dotnet build -c Release` only (updates `../mods/AnalyticsTelemetry/`). |
+| `scripts/package-mod-zip.sh` | Zip `../mods/AnalyticsTelemetry/` → `dist/AnalyticsTelemetry-<csproj-Version>.zip` (run after a build). |
+| `scripts/build-and-package.sh` | Build + zip in one step (Linux / macOS / Git Bash). |
+| `scripts/build-and-package.ps1` | Same as above on **Windows** (PowerShell 5.1+ from repo root: `.\scripts\build-and-package.ps1`). |
+
+Example (Unix):
 
 ```bash
-./scripts/package-mod-zip.sh
+./scripts/build-and-package.sh
+# upload dist/AnalyticsTelemetry-0.6.19.zip via Nexus “Upload a new file”
 ```

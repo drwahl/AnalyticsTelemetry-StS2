@@ -17,5 +17,6 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="..\..\Telemetry\MetricsVisualModel.cs" Link="MetricsVisualModel.cs" />
+    <Compile Include="..\..\Telemetry\MetricsTimeSeriesMath.cs" Link="MetricsTimeSeriesMath.cs" />
   </ItemGroup>
 </Project>
