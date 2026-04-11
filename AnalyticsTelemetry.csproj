@@ -1,0 +1,90 @@
+<Project Sdk="Godot.NET.Sdk/4.5.1" InitialTargets="CheckDependencyPaths">
+    <Import Project=".\Sts2PathDiscovery.props"/>
+    <PropertyGroup>
+        <!-- Semver for the DLL; keep in sync with AnalyticsTelemetry.json "version" (drop the leading v in json when comparing). -->
+        <Version>0.6.19</Version>
+        <TargetFramework>net9.0</TargetFramework>
+        <!-- Godot.NET.Sdk already emits AssemblyInfo / TFM attributes; disable SDK duplicates (CS0579). -->
+        <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+        <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <DefaultItemExcludes>packages/**</DefaultItemExcludes>
+        <AppOutputBase>$(MSBuildProjectDirectory)\</AppOutputBase>
+        <PathMap>$(AppOutputBase)=.\</PathMap>
+        <RootNamespace>AnalyticsTelemetry</RootNamespace>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <NoWarn>$(NoWarn);MSB3270</NoWarn>
+    </PropertyGroup>
+
+    <!--
+      BaseLib MUST be the same file the game loads (mods/BaseLib/BaseLib.dll). The NuGet Alchyr.Sts2.BaseLib package
+      ships a different assembly version (e.g. 3.0.0.0) than GitHub/release BaseLib (e.g. 0.3.0.0), which causes
+      FileNotFoundException at mod load and "Loaded 1 mods (2 total)" — only BaseLib counts.
+    -->
+    <ItemGroup Condition="Exists('$(Sts2DataDir)')" >
+        <Reference Include="0Harmony">
+            <HintPath>$(Sts2DataDir)/0Harmony.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="sts2">
+            <HintPath>$(Sts2DataDir)/sts2.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+    </ItemGroup>
+
+    <ItemGroup Condition="Exists('$(ModsPath)BaseLib/BaseLib.dll')">
+        <Reference Include="BaseLib">
+            <HintPath>$(ModsPath)BaseLib/BaseLib.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Krafs.Publicizer" Version="2.3.0" PrivateAssets="All"/>
+        <PackageReference Include="Alchyr.Sts2.ModAnalyzers" Version="*" />
+        <AdditionalFiles Include="AnalyticsTelemetry/localization/**/*.json"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <Compile Remove="AnalyticsTelemetry/**" />
+        <EmbeddedResource Remove="AnalyticsTelemetry/**" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Condition="Exists('Directory.Build.props')" Include="Directory.Build.props"/>
+        <None Include=".gitignore" />
+        <None Include="AnalyticsTelemetry.json" />
+        <None Include="project.godot"/>
+        <None Include="AnalyticsTelemetry/**" />
+    </ItemGroup>
+
+    <Target Name="CheckDependencyPaths" >
+        <Error
+                Text="Slay the Spire 2 data not found at path '$(Sts2DataDir)'"
+                Condition="'$(Sts2DataDir)' == '' or !Exists('$(Sts2DataDir)')" />
+        <Error
+                Text="BaseLib.dll not found at '$(ModsPath)BaseLib/BaseLib.dll'. Install BaseLib into the game's mods folder before building (same assembly the runtime loads; NuGet BaseLib is a different version)."
+                Condition="!Exists('$(ModsPath)BaseLib/BaseLib.dll')" />
+    </Target>
+
+    <Target Name="CopyToModsFolderOnBuild" AfterTargets="PostBuildEvent">
+        <Message Text="Copying .dll and manifest to mods folder." Importance="high" />
+        <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ModsPath)$(MSBuildProjectName)/" />
+        <Copy SourceFiles="$(AssemblyName).json" DestinationFolder="$(ModsPath)$(MSBuildProjectName)/" />
+    </Target>
+
+    <Target Name="NeedGodotForPublish" BeforeTargets="Publish">
+        <Error Text="Set GodotPath in Directory.Build.props before publish (Godot 4.5.1 mono). Not found at '$(GodotPath)'."
+               Condition="'$(GodotPath)' == '' or !Exists('$(GodotPath)')"/>
+    </Target>
+    <Target Name="GodotPublish" AfterTargets="Publish" Condition="'$(GodotPath)' != '' and Exists('$(GodotPath)') and '$(IsInnerGodotExport)' != 'true'">
+        <Message Text="Exporting Godot .pck to mods folder" Importance="high"/>
+        <Exec Command="&quot;$(GodotPath)&quot; --headless --export-pack &quot;BasicExport&quot; &quot;$(ModsPath)$(MSBuildProjectName)/$(MSBuildProjectName).pck&quot;"
+              EnvironmentVariables="IsInnerGodotExport=true;MSBUILDDISABLENODEREUSE=1"
+              ContinueOnError="WarnAndContinue"/>
+    </Target>
+</Project>

@@ -1,0 +1,10 @@
+<Project>
+    <PropertyGroup>
+        <!-- Megadot / Godot 4.5.1 mono — required for `dotnet publish` (.pck export). `dotnet build` does not need this. -->
+        <!-- Example Linux: /path/to/Godot_v4.5.1-stable_mono_linux.x86_64 -->
+        <GodotPath></GodotPath>
+
+        <!-- Uncomment if Sts2PathDiscovery does not find your install (secondary Steam library, Flatpak, etc.) -->
+        <!-- <Sts2Path>/path/to/Slay the Spire 2</Sts2Path> -->
+    </PropertyGroup>
+</Project>
