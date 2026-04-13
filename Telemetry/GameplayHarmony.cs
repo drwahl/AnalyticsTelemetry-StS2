@@ -3,7 +3,7 @@ using HarmonyLib;
 
 namespace AnalyticsTelemetry.Telemetry;
 
-/// <summary>Applies Harmony patches for gameplay telemetry (history entry ctors, <c>PlayerCmd</c> energy, <c>CombatManager</c> lifecycle).</summary>
+/// <summary>Applies Harmony patches for gameplay telemetry (history entry ctors, <c>PlayerCmd</c> energy, <c>CombatManager</c> lifecycle, map path decision timing).</summary>
 public static class GameplayHarmony
 {
     private const string HarmonyId = "AnalyticsTelemetry.Gameplay";
@@ -19,6 +19,7 @@ public static class GameplayHarmony
         {
             var h = new Harmony(HarmonyId);
             h.PatchAll(typeof(GameplayHarmony).Assembly);
+            MapPathDecisionHarmonyBootstrap.TryPatchVisibility(h);
             MainFile.Logger.Info("AnalyticsTelemetry: Harmony gameplay patches applied.");
         }
         catch (Exception e)

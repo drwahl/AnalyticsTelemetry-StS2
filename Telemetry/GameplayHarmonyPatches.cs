@@ -109,6 +109,7 @@ public static class GameplayHarmonyPatches
                 "combat_ended",
                 new CombatEndedPayload(s.CombatOrdinal, dur));
             CardDamageAttributionTracker.OnCombatEnded(s.CombatOrdinal);
+            HandCardPlayOrderTracker.OnCombatEnded(s.CombatOrdinal);
             TelemetryScopeContext.OnCombatEnded();
         }
     }

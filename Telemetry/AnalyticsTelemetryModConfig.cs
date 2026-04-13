@@ -31,6 +31,8 @@ internal sealed class AnalyticsTelemetryModConfig : SimpleModConfig
     private ScrollContainer? _liveTabScroll;
     private Control? _metricsVisualHost;
     private string _lastLiveChartTextureSignature = "";
+    private string _lastLiveChartLayoutSignature = "";
+    private ulong _nextLiveChartTextureEligibleTicksMsec;
     private string _lastLiveVolatileUiSignature = "";
     private ItemList? _fileList;
     private RichTextLabel? _fileTailBody;
@@ -263,17 +265,23 @@ internal sealed class AnalyticsTelemetryModConfig : SimpleModConfig
         if (_metricsDmgBlockCheck is not null)
             _metricsDmgBlockCheck.ButtonPressed = TelemetryMetricsUiPreferences.ShowChartBlock;
         TelemetryMetricsUiPreferences.SaveToDisk();
-        _lastLiveChartTextureSignature = "";
-        _lastLiveVolatileUiSignature = "";
+        BustLiveMetricsSignatures();
         RefreshLiveMetrics(scrollToTop: true);
+    }
+
+    private void BustLiveMetricsSignatures()
+    {
+        _lastLiveChartTextureSignature = "";
+        _lastLiveChartLayoutSignature = "";
+        _nextLiveChartTextureEligibleTicksMsec = 0;
+        _lastLiveVolatileUiSignature = "";
     }
 
     private void OnClearHistoricMetricsPressed()
     {
         TelemetryMetricsStore.ClearAllHistoricMetrics();
         TelemetryEventLog.ClearRecentUiLines();
-        _lastLiveChartTextureSignature = "";
-        _lastLiveVolatileUiSignature = "";
+        BustLiveMetricsSignatures();
         RefreshLiveMetrics(scrollToTop: true);
     }
 
@@ -775,29 +783,46 @@ internal sealed class AnalyticsTelemetryModConfig : SimpleModConfig
         }
 
         var chartSig = model.ChartTextureSignature() + "|" + uiSig;
+        var chartLayoutSig = model.ChartLayoutSignature() + "|" + uiSig;
         var volSig = model.VolatileUiSignature(includeDetailText: true);
-        if (chartSig == _lastLiveChartTextureSignature && volSig == _lastLiveVolatileUiSignature && !scrollToTop)
+        var now = Time.GetTicksMsec();
+        var plan = MetricsUiRefreshPolicy.DecideWithThrottledChartTextures(
+            chartSig,
+            chartLayoutSig,
+            volSig,
+            _lastLiveChartTextureSignature,
+            _lastLiveChartLayoutSignature,
+            _lastLiveVolatileUiSignature,
+            scrollToTop,
+            now,
+            ref _nextLiveChartTextureEligibleTicksMsec);
+        if (plan == MetricsUiRefreshKind.Noop)
             return;
 
-        if (scrollToTop || chartSig != _lastLiveChartTextureSignature)
+        if (plan == MetricsUiRefreshKind.FullRebuild)
         {
-            _lastLiveChartTextureSignature = chartSig;
-            _lastLiveVolatileUiSignature = volSig;
-            MetricsVisualPanelFactory.Rebuild(
-                _metricsVisualHost,
-                model,
-                compactDetail: false,
-                TelemetryMetricsUiPreferences.PresentationOptions);
-        }
-        else if (volSig != _lastLiveVolatileUiSignature)
-        {
-            if (!MetricsVisualPanelFactory.TryRefreshVolatileOnly(
+            var chartDataOnly = MetricsUiRefreshPolicy.ShouldUseInPlaceChartTextureSwap(
+                scrollToTop,
+                chartLayoutSig,
+                _lastLiveChartLayoutSignature,
+                chartSig,
+                _lastLiveChartTextureSignature,
+                volSig,
+                _lastLiveVolatileUiSignature);
+
+            if (chartDataOnly
+                && MetricsVisualPanelFactory.TrySwapTimeSeriesChartTextures(
                     _metricsVisualHost,
                     model,
                     compactDetail: false,
                     TelemetryMetricsUiPreferences.PresentationOptions))
             {
                 _lastLiveChartTextureSignature = chartSig;
+            }
+            else
+            {
+                _lastLiveChartTextureSignature = chartSig;
+                _lastLiveChartLayoutSignature = chartLayoutSig;
                 _lastLiveVolatileUiSignature = volSig;
                 MetricsVisualPanelFactory.Rebuild(
                     _metricsVisualHost,
@@ -805,7 +830,26 @@ internal sealed class AnalyticsTelemetryModConfig : SimpleModConfig
                     compactDetail: false,
                     TelemetryMetricsUiPreferences.PresentationOptions);
             }
-            else
+        }
+        else if (plan == MetricsUiRefreshKind.VolatileOnly)
+        {
+            if (!MetricsVisualPanelFactory.TryRefreshVolatileOnly(
+                    _metricsVisualHost,
+                    model,
+                    compactDetail: false,
+                    TelemetryMetricsUiPreferences.PresentationOptions,
+                    out var rebuiltTail))
+            {
+                _lastLiveChartTextureSignature = chartSig;
+                _lastLiveChartLayoutSignature = chartLayoutSig;
+                _lastLiveVolatileUiSignature = volSig;
+                MetricsVisualPanelFactory.Rebuild(
+                    _metricsVisualHost,
+                    model,
+                    compactDetail: false,
+                    TelemetryMetricsUiPreferences.PresentationOptions);
+            }
+            else if (rebuiltTail)
                 _lastLiveVolatileUiSignature = volSig;
         }
 

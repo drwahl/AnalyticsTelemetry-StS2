@@ -15,6 +15,11 @@ internal sealed class MetricsVisualModel
     public IReadOnlyList<MetricBar> CardFlowBars { get; init; } = Array.Empty<MetricBar>();
     /// <summary>Visited map room types from run save (<c>map_point_history</c>), when available.</summary>
     public IReadOnlyList<MetricBar> RoomVisitBars { get; init; } = Array.Empty<MetricBar>();
+    /// <summary>
+    /// Per-combat total HP lost by <b>enemies/creatures</b> from <c>combat_history_damage_received</c> (same “dmg out” notion as
+    /// live charts). Bars are oldest → newest combat ordinal; last window is capped for readability.
+    /// </summary>
+    public IReadOnlyList<MetricBar> DamageByCombatBars { get; init; } = Array.Empty<MetricBar>();
     /// <summary>One texture per group (e.g. throughput vs damage vs energy).</summary>
     public IReadOnlyList<MetricTimeSeriesChart> TimeSeriesCharts { get; init; } = Array.Empty<MetricTimeSeriesChart>();
     /// <summary>When true and a chart exists, bar sections that duplicate the same totals are de-emphasized.</summary>
@@ -31,6 +36,25 @@ internal sealed class MetricsVisualModel
     /// <param name="includeDetailText">When false, detail text changes do not invalidate (overlay compact mode).</param>
     public string ChangeSignature(bool includeDetailText = true) =>
         ChartTextureSignature() + "##V##" + VolatileUiSignature(includeDetailText);
+
+    /// <summary>
+    /// Fingerprint for chart <b>layout</b> (which graphs/lines exist, titles only). Stable when only numeric samples
+    /// drift — used to allow throttling <see cref="ChartTextureSignature"/> texture redraws during live play.
+    /// </summary>
+    public string ChartLayoutSignature()
+    {
+        var sb = new StringBuilder(256);
+        sb.Append(ViewTitle);
+        sb.Append('|').Append('P').Append(PreferTimeSeriesOverBars ? '1' : '0');
+        foreach (var chart in TimeSeriesCharts)
+        {
+            sb.Append("|TS|").Append(chart.SectionTitle);
+            foreach (var ts in chart.Series)
+                sb.Append("|T").Append(ts.Title);
+        }
+
+        return sb.ToString();
+    }
 
     /// <summary>
     /// Fingerprint for <b>expensive</b> chart texture rebuilds (multi-series rasterization). Excludes counters and
@@ -63,6 +87,8 @@ internal sealed class MetricsVisualModel
             sb.Append('|').Append('C').Append(b.Label).Append('=').Append(b.Value);
         foreach (var b in RoomVisitBars)
             sb.Append('|').Append('M').Append(b.Label).Append('=').Append(b.Value);
+        foreach (var b in DamageByCombatBars)
+            sb.Append('|').Append('D').Append(b.Label).Append('=').Append(b.Value);
         foreach (var c in Counters)
             sb.Append('|').Append(c.Label).Append('=').Append(c.Value);
         foreach (var c in CardDamageLeaders)

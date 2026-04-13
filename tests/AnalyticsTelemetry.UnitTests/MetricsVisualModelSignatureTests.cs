@@ -6,12 +6,13 @@ namespace AnalyticsTelemetry.UnitTests;
 
 public sealed class MetricsVisualModelSignatureTests
 {
-    private static MetricsVisualModel Mk(
+    internal static MetricsVisualModel Mk(
         string viewTitle = "Overview",
         IReadOnlyList<string>? headers = null,
         IReadOnlyList<MetricBar>? recordingBars = null,
         IReadOnlyList<MetricBar>? cardFlowBars = null,
         IReadOnlyList<MetricBar>? roomVisitBars = null,
+        IReadOnlyList<MetricBar>? damageByCombatBars = null,
         IReadOnlyList<MetricTimeSeriesChart>? timeSeriesCharts = null,
         bool preferTimeSeriesOverBars = false,
         IReadOnlyList<MetricCounter>? counters = null,
@@ -26,6 +27,7 @@ public sealed class MetricsVisualModelSignatureTests
             RecordingBars = recordingBars ?? Array.Empty<MetricBar>(),
             CardFlowBars = cardFlowBars ?? Array.Empty<MetricBar>(),
             RoomVisitBars = roomVisitBars ?? Array.Empty<MetricBar>(),
+            DamageByCombatBars = damageByCombatBars ?? Array.Empty<MetricBar>(),
             TimeSeriesCharts = timeSeriesCharts ?? Array.Empty<MetricTimeSeriesChart>(),
             PreferTimeSeriesOverBars = preferTimeSeriesOverBars,
             Counters = counters ?? Array.Empty<MetricCounter>(),
@@ -58,6 +60,15 @@ public sealed class MetricsVisualModelSignatureTests
     }
 
     [Fact]
+    public void VolatileUiSignature_reflects_damage_by_combat_bars()
+    {
+        var lime = new Color(0.45f, 0.88f, 0.58f);
+        var a = Mk(damageByCombatBars: new[] { new MetricBar("Combat #1", 95, lime) });
+        var b = Mk(damageByCombatBars: new[] { new MetricBar("Combat #1", 110, lime) });
+        Assert.NotEqual(a.VolatileUiSignature(true), b.VolatileUiSignature(true));
+    }
+
+    [Fact]
     public void VolatileUiSignature_detail_toggle_excludes_detail_text_when_false()
     {
         var a = Mk(detailText: "long\nscroll\nblock");
@@ -82,6 +93,42 @@ public sealed class MetricsVisualModelSignatureTests
             counters: new[] { new MetricCounter("X", "1") });
         var expected = m.ChartTextureSignature() + "##V##" + m.VolatileUiSignature(true);
         Assert.Equal(expected, m.ChangeSignature(true));
+    }
+
+    [Fact]
+    public void ChartLayoutSignature_stable_when_only_series_values_change()
+    {
+        var a = Mk(timeSeriesCharts: new[]
+        {
+            new MetricTimeSeriesChart(
+                "T",
+                new[] { new MetricTimeSeries("L", Colors.Cyan, new[] { 1.0, 2.0 }) }),
+        });
+        var b = Mk(timeSeriesCharts: new[]
+        {
+            new MetricTimeSeriesChart(
+                "T",
+                new[] { new MetricTimeSeries("L", Colors.Cyan, new[] { 1.0, 99.0 }) }),
+        });
+        Assert.Equal(a.ChartLayoutSignature(), b.ChartLayoutSignature());
+    }
+
+    [Fact]
+    public void ChartLayoutSignature_changes_when_section_title_changes()
+    {
+        var a = Mk(timeSeriesCharts: new[]
+        {
+            new MetricTimeSeriesChart(
+                "A",
+                new[] { new MetricTimeSeries("L", Colors.Cyan, new[] { 1.0 }) }),
+        });
+        var b = Mk(timeSeriesCharts: new[]
+        {
+            new MetricTimeSeriesChart(
+                "B",
+                new[] { new MetricTimeSeries("L", Colors.Cyan, new[] { 1.0 }) }),
+        });
+        Assert.NotEqual(a.ChartLayoutSignature(), b.ChartLayoutSignature());
     }
 
     [Fact]

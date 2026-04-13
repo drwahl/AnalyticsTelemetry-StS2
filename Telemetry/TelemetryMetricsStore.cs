@@ -35,6 +35,12 @@ internal static class TelemetryMetricsStore
     private static readonly Dictionary<string, MetricsAccumulator> ByPlayerSession = new(StringComparer.Ordinal);
     private static readonly List<HandRollup> HandHistory = [];
     private const int MaxHands = 36;
+    /// <summary>Max ~1.5s live samples drawn on in-game charts (buffers may retain more for rollups).</summary>
+    private const int LiveChartDisplayMaxSamples = 48;
+    /// <summary>Max 5‑minute wall-clock buckets on the live wall chart.</summary>
+    private const int LiveChartDisplayMaxFiveMinuteBuckets = 4;
+    /// <summary>Max completed player energy turns (hands) on live hand charts.</summary>
+    private const int LiveChartDisplayMaxHands = 4;
     /// <summary>Damage parsed from history since the last <c>combat_player_energy_turn</c>; flushed into that hand’s rollup.</summary>
     private static decimal _pendingHandDamageLive;
 
@@ -168,23 +174,50 @@ internal static class TelemetryMetricsStore
         return " Showing: " + string.Join(", ", parts) + " — toggles in Analytics overlay or Mod → Live metrics.";
     }
 
+    private static double[] TailDoubles(IReadOnlyList<double> list, int maxCount)
+    {
+        var c = list.Count;
+        if (c == 0)
+            return Array.Empty<double>();
+        var n = Math.Min(c, maxCount);
+        var start = c - n;
+        var a = new double[n];
+        for (var i = 0; i < n; i++)
+            a[i] = list[start + i];
+        return a;
+    }
+
+    private static double[] TailLongsAsDoubles(IReadOnlyList<long> list, int maxCount)
+    {
+        var c = list.Count;
+        if (c == 0)
+            return Array.Empty<double>();
+        var n = Math.Min(c, maxCount);
+        var start = c - n;
+        var a = new double[n];
+        for (var i = 0; i < n; i++)
+            a[i] = list[start + i];
+        return a;
+    }
+
     private static List<MetricTimeSeries> BuildLiveDamageDeltaSeriesLocked()
     {
+        var cap = LiveChartDisplayMaxSamples;
         var list = new List<MetricTimeSeries>(4);
         if (TelemetryMetricsUiPreferences.ShowChartDamageIn)
-            list.Add(new("Dmg in Δ (to player)", ChartColorDamageIn, SeriesDamageInDelta.ToArray(), SeriesSnapDamageIn.ToArray()));
+            list.Add(new("Dmg in Δ (to player)", ChartColorDamageIn, TailDoubles(SeriesDamageInDelta, cap), TailDoubles(SeriesSnapDamageIn, cap)));
         if (TelemetryMetricsUiPreferences.ShowChartDamageOut)
-            list.Add(new("Dmg out Δ (to enemies)", ChartColorDamageOut, SeriesDamageOutDelta.ToArray(), SeriesSnapDamageOut.ToArray()));
+            list.Add(new("Dmg out Δ (to enemies)", ChartColorDamageOut, TailDoubles(SeriesDamageOutDelta, cap), TailDoubles(SeriesSnapDamageOut, cap)));
         if (TelemetryMetricsUiPreferences.ShowChartDamageUnk)
-            list.Add(new("Dmg unclassified Δ", ChartColorDamageUnk, SeriesDamageUnkDelta.ToArray(), SeriesSnapDamageUnk.ToArray()));
+            list.Add(new("Dmg unclassified Δ", ChartColorDamageUnk, TailDoubles(SeriesDamageUnkDelta, cap), TailDoubles(SeriesSnapDamageUnk, cap)));
         if (TelemetryMetricsUiPreferences.ShowChartBlock)
-            list.Add(new("Block Δ", ChartColorBlock, SeriesBlockDelta.ToArray(), SeriesSnapBlockSum.ToArray()));
+            list.Add(new("Block Δ", ChartColorBlock, TailDoubles(SeriesBlockDelta, cap), TailDoubles(SeriesSnapBlockSum, cap)));
         if (list.Count == 0)
         {
-            list.Add(new("Dmg in Δ (to player)", ChartColorDamageIn, SeriesDamageInDelta.ToArray(), SeriesSnapDamageIn.ToArray()));
-            list.Add(new("Dmg out Δ (to enemies)", ChartColorDamageOut, SeriesDamageOutDelta.ToArray(), SeriesSnapDamageOut.ToArray()));
-            list.Add(new("Dmg unclassified Δ", ChartColorDamageUnk, SeriesDamageUnkDelta.ToArray(), SeriesSnapDamageUnk.ToArray()));
-            list.Add(new("Block Δ", ChartColorBlock, SeriesBlockDelta.ToArray(), SeriesSnapBlockSum.ToArray()));
+            list.Add(new("Dmg in Δ (to player)", ChartColorDamageIn, TailDoubles(SeriesDamageInDelta, cap), TailDoubles(SeriesSnapDamageIn, cap)));
+            list.Add(new("Dmg out Δ (to enemies)", ChartColorDamageOut, TailDoubles(SeriesDamageOutDelta, cap), TailDoubles(SeriesSnapDamageOut, cap)));
+            list.Add(new("Dmg unclassified Δ", ChartColorDamageUnk, TailDoubles(SeriesDamageUnkDelta, cap), TailDoubles(SeriesSnapDamageUnk, cap)));
+            list.Add(new("Block Δ", ChartColorBlock, TailDoubles(SeriesBlockDelta, cap), TailDoubles(SeriesSnapBlockSum, cap)));
         }
 
         return list;
@@ -192,21 +225,22 @@ internal static class TelemetryMetricsStore
 
     private static List<MetricTimeSeries> BuildLiveDamageCumulativeSeriesLocked()
     {
+        var cap = LiveChartDisplayMaxSamples;
         var list = new List<MetricTimeSeries>(4);
         if (TelemetryMetricsUiPreferences.ShowChartDamageIn)
-            list.Add(new("Dmg in Σ (to player)", ChartColorDamageIn, SeriesSnapDamageIn.ToArray()));
+            list.Add(new("Dmg in Σ (to player)", ChartColorDamageIn, TailDoubles(SeriesSnapDamageIn, cap)));
         if (TelemetryMetricsUiPreferences.ShowChartDamageOut)
-            list.Add(new("Dmg out Σ (to enemies)", ChartColorDamageOut, SeriesSnapDamageOut.ToArray()));
+            list.Add(new("Dmg out Σ (to enemies)", ChartColorDamageOut, TailDoubles(SeriesSnapDamageOut, cap)));
         if (TelemetryMetricsUiPreferences.ShowChartDamageUnk)
-            list.Add(new("Dmg unclassified Σ", ChartColorDamageUnk, SeriesSnapDamageUnk.ToArray()));
+            list.Add(new("Dmg unclassified Σ", ChartColorDamageUnk, TailDoubles(SeriesSnapDamageUnk, cap)));
         if (TelemetryMetricsUiPreferences.ShowChartBlock)
-            list.Add(new("Block Σ", ChartColorBlock, SeriesSnapBlockSum.ToArray()));
+            list.Add(new("Block Σ", ChartColorBlock, TailDoubles(SeriesSnapBlockSum, cap)));
         if (list.Count == 0)
         {
-            list.Add(new("Dmg in Σ (to player)", ChartColorDamageIn, SeriesSnapDamageIn.ToArray()));
-            list.Add(new("Dmg out Σ (to enemies)", ChartColorDamageOut, SeriesSnapDamageOut.ToArray()));
-            list.Add(new("Dmg unclassified Σ", ChartColorDamageUnk, SeriesSnapDamageUnk.ToArray()));
-            list.Add(new("Block Σ", ChartColorBlock, SeriesSnapBlockSum.ToArray()));
+            list.Add(new("Dmg in Σ (to player)", ChartColorDamageIn, TailDoubles(SeriesSnapDamageIn, cap)));
+            list.Add(new("Dmg out Σ (to enemies)", ChartColorDamageOut, TailDoubles(SeriesSnapDamageOut, cap)));
+            list.Add(new("Dmg unclassified Σ", ChartColorDamageUnk, TailDoubles(SeriesSnapDamageUnk, cap)));
+            list.Add(new("Block Σ", ChartColorBlock, TailDoubles(SeriesSnapBlockSum, cap)));
         }
 
         return list;
@@ -244,6 +278,7 @@ internal static class TelemetryMetricsStore
 
     internal static void Reset()
     {
+        HandCardPlayOrderTracker.ResetSession();
         CardDamageAttributionTracker.ResetSession();
         lock (Gate)
         {
@@ -592,45 +627,47 @@ internal static class TelemetryMetricsStore
     {
         if (SeriesElapsedSec.Count < 1)
             return Array.Empty<MetricTimeSeriesChart>();
-        const string liveHover =
-            "Live: line height = change since last sample (~1.5s wall or burst). Hover shows session running total and that change.";
+        var liveHover =
+            "Live: line height = change since last sample (~1.5s wall or burst). Hover shows session running total and that change. "
+            + "In-game graphs use a recent window only (last ~" + LiveChartDisplayMaxSamples + " samples), not the full session buffer.";
         const string liveDeltaDmgHover =
             "Live: from combat_history_damage_received (HP lost by a victim) and block_gained — not “attack cards only.” Red/coral = dmg to player (in), lime = dmg to enemies (out), gray = unclassified, magenta = block Δ per ~1.5s sample.";
         const string liveCumulativeHover =
             "Live: running Σ — dmg in (player), dmg out (enemies), unclassified, then block. Same log sources and colors as the Δ chart above.";
         const string liveDerivedHover =
             "Live: per sample bucket, derived ratios from the same Δs as other charts (not comparable to replay 5‑min buckets).";
+        var cap = LiveChartDisplayMaxSamples;
         var throughput = new List<MetricTimeSeries>(4)
         {
-            new("NDJSON events", new Color(0.52f, 0.78f, 1f), SeriesEventsDelta.Select(z => (double)z).ToArray(),
-                SeriesSnapEvents.ToArray()),
-            new("Combat history lines", new Color(0.45f, 0.88f, 0.58f), SeriesHistoryDelta.Select(z => (double)z).ToArray(),
-                SeriesSnapHistory.ToArray()),
-            new("Card plays", new Color(0.32f, 0.9f, 0.52f), SeriesPlaysDelta.Select(z => (double)z).ToArray(),
-                SeriesSnapPlays.ToArray()),
-            new("Card draws", new Color(0.42f, 0.68f, 1f), SeriesDrawsDelta.Select(z => (double)z).ToArray(),
-                SeriesSnapDraws.ToArray()),
+            new("NDJSON events", new Color(0.52f, 0.78f, 1f), TailLongsAsDoubles(SeriesEventsDelta, cap),
+                TailDoubles(SeriesSnapEvents, cap)),
+            new("Combat history lines", new Color(0.45f, 0.88f, 0.58f), TailLongsAsDoubles(SeriesHistoryDelta, cap),
+                TailDoubles(SeriesSnapHistory, cap)),
+            new("Card plays", new Color(0.32f, 0.9f, 0.52f), TailLongsAsDoubles(SeriesPlaysDelta, cap),
+                TailDoubles(SeriesSnapPlays, cap)),
+            new("Card draws", new Color(0.42f, 0.68f, 1f), TailLongsAsDoubles(SeriesDrawsDelta, cap),
+                TailDoubles(SeriesSnapDraws, cap)),
         };
         var damageBlock = BuildLiveDamageDeltaSeriesLocked();
         var damageBlockCumulative = BuildLiveDamageCumulativeSeriesLocked();
         var dmgFoot = DamageChartFilterFootnote();
         var energy = new List<MetricTimeSeries>(4)
         {
-            new("Player energy turns (count)", new Color(1f, 0.92f, 0.45f), SeriesEnergyTurnsDelta.ToArray(),
-                SeriesSnapEnergyTurns.ToArray()),
-            new("Energy steps (Σ)", new Color(0.5f, 0.92f, 0.72f), SeriesEnergyStepsDelta.ToArray(), SeriesSnapEnergySteps.ToArray()),
-            new("Energy gained (Σ)", new Color(0.95f, 0.82f, 0.35f), SeriesEnergyGainDelta.ToArray(), SeriesSnapEnergyGain.ToArray()),
-            new("Energy lost (Σ)", new Color(0.9f, 0.5f, 0.35f), SeriesEnergyLoseDelta.ToArray(), SeriesSnapEnergyLose.ToArray()),
+            new("Player energy turns (count)", new Color(1f, 0.92f, 0.45f), TailDoubles(SeriesEnergyTurnsDelta, cap),
+                TailDoubles(SeriesSnapEnergyTurns, cap)),
+            new("Energy steps (Σ)", new Color(0.5f, 0.92f, 0.72f), TailDoubles(SeriesEnergyStepsDelta, cap), TailDoubles(SeriesSnapEnergySteps, cap)),
+            new("Energy gained (Σ)", new Color(0.95f, 0.82f, 0.35f), TailDoubles(SeriesEnergyGainDelta, cap), TailDoubles(SeriesSnapEnergyGain, cap)),
+            new("Energy lost (Σ)", new Color(0.9f, 0.5f, 0.35f), TailDoubles(SeriesEnergyLoseDelta, cap), TailDoubles(SeriesSnapEnergyLose, cap)),
         };
         var piles = new List<MetricTimeSeries>(4)
         {
-            new("Draws", new Color(0.42f, 0.68f, 1f), SeriesDrawsDelta.Select(z => (double)z).ToArray(), SeriesSnapDraws.ToArray()),
-            new("Discards", new Color(1f, 0.72f, 0.28f), SeriesDiscardsDelta.Select(z => (double)z).ToArray(),
-                SeriesSnapDiscards.ToArray()),
-            new("Exhaust", new Color(1f, 0.42f, 0.38f), SeriesExhaustsDelta.Select(z => (double)z).ToArray(),
-                SeriesSnapExhausts.ToArray()),
-            new("Generated", new Color(0.82f, 0.5f, 1f), SeriesGeneratedDelta.Select(z => (double)z).ToArray(),
-                SeriesSnapGenerated.ToArray()),
+            new("Draws", new Color(0.42f, 0.68f, 1f), TailLongsAsDoubles(SeriesDrawsDelta, cap), TailDoubles(SeriesSnapDraws, cap)),
+            new("Discards", new Color(1f, 0.72f, 0.28f), TailLongsAsDoubles(SeriesDiscardsDelta, cap),
+                TailDoubles(SeriesSnapDiscards, cap)),
+            new("Exhaust", new Color(1f, 0.42f, 0.38f), TailLongsAsDoubles(SeriesExhaustsDelta, cap),
+                TailDoubles(SeriesSnapExhausts, cap)),
+            new("Generated", new Color(0.82f, 0.5f, 1f), TailLongsAsDoubles(SeriesGeneratedDelta, cap),
+                TailDoubles(SeriesSnapGenerated, cap)),
         };
 
         var charts = new List<MetricTimeSeriesChart>();
@@ -652,8 +689,8 @@ internal static class TelemetryMetricsStore
             + "run_gold NDJSON lines fire when the save’s gold field changes (often every few seconds in-run).";
         var goldSeries = new List<MetricTimeSeries>(2)
         {
-            new("Gold Δ / sample", ChartColorGoldDelta, SeriesGoldDelta.ToArray()),
-            new("Gold total (held)", ChartColorGold, SeriesSnapGold.ToArray(), SeriesSnapGold.ToArray()),
+            new("Gold Δ / sample", ChartColorGoldDelta, TailDoubles(SeriesGoldDelta, cap)),
+            new("Gold total (held)", ChartColorGold, TailDoubles(SeriesSnapGold, cap), TailDoubles(SeriesSnapGold, cap)),
         };
         charts.Add(new MetricTimeSeriesChart("Gold (run save, live)", goldSeries, liveGoldHover));
         charts.Add(new MetricTimeSeriesChart("Card pile events (live — not hand sizes)", piles, liveHover));
@@ -661,27 +698,30 @@ internal static class TelemetryMetricsStore
             "Live: counts of combat_history_power_received + card_afflicted lines, bucketed by inferred recipient (heuristic on logged properties). Δ chart uses the same ~1.5s samples as damage. Hover shows running Σ per line.";
         var statusDelta = new List<MetricTimeSeries>(3)
         {
-            new("Status lines → player Δ", new Color(1f, 0.55f, 0.42f), SeriesStatusToPlayerDelta.ToArray(), SeriesSnapStatusToPlayer.ToArray()),
-            new("Status lines → enemies Δ", new Color(0.45f, 0.88f, 0.55f), SeriesStatusToEnemyDelta.ToArray(), SeriesSnapStatusToEnemy.ToArray()),
-            new("Status lines unknown Δ", new Color(0.72f, 0.72f, 0.78f), SeriesStatusUnknownDelta.ToArray(), SeriesSnapStatusUnknown.ToArray()),
+            new("Status lines → player Δ", new Color(1f, 0.55f, 0.42f), TailDoubles(SeriesStatusToPlayerDelta, cap), TailDoubles(SeriesSnapStatusToPlayer, cap)),
+            new("Status lines → enemies Δ", new Color(0.45f, 0.88f, 0.55f), TailDoubles(SeriesStatusToEnemyDelta, cap), TailDoubles(SeriesSnapStatusToEnemy, cap)),
+            new("Status lines unknown Δ", new Color(0.72f, 0.72f, 0.78f), TailDoubles(SeriesStatusUnknownDelta, cap), TailDoubles(SeriesSnapStatusUnknown, cap)),
         };
         charts.Add(new MetricTimeSeriesChart("Powers & afflictions Δ (live)", statusDelta, liveStatusHover));
 
-        var n = SeriesPlaysDelta.Count;
+        var total = SeriesPlaysDelta.Count;
+        var n = Math.Min(total, LiveChartDisplayMaxSamples);
         if (n >= 1)
         {
+            var start = total - n;
             var playsPerEnergy = new double[n];
             var dmgPerPlay = new double[n];
             var netPile = new double[n];
             var blockPerDmg = new double[n];
             for (var i = 0; i < n; i++)
             {
-                var et = Math.Max(1, SeriesEnergyTurnsDelta[i]);
-                playsPerEnergy[i] = (double)SeriesPlaysDelta[i] / et;
-                var pl = Math.Max(1, SeriesPlaysDelta[i]);
-                dmgPerPlay[i] = SeriesDamageDelta[i] / pl;
-                netPile[i] = SeriesDrawsDelta[i] - (double)SeriesDiscardsDelta[i] - SeriesExhaustsDelta[i];
-                blockPerDmg[i] = SeriesDamageDelta[i] > 1e-9 ? SeriesBlockDelta[i] / SeriesDamageDelta[i] : 0;
+                var idx = start + i;
+                var et = Math.Max(1, SeriesEnergyTurnsDelta[idx]);
+                playsPerEnergy[i] = (double)SeriesPlaysDelta[idx] / et;
+                var pl = Math.Max(1, SeriesPlaysDelta[idx]);
+                dmgPerPlay[i] = SeriesDamageDelta[idx] / pl;
+                netPile[i] = SeriesDrawsDelta[idx] - (double)SeriesDiscardsDelta[idx] - SeriesExhaustsDelta[idx];
+                blockPerDmg[i] = SeriesDamageDelta[idx] > 1e-9 ? SeriesBlockDelta[idx] / SeriesDamageDelta[idx] : 0;
             }
 
             charts.Add(new MetricTimeSeriesChart(
@@ -705,19 +745,23 @@ internal static class TelemetryMetricsStore
     {
         if (LiveWall5mDamageIn.Count < 1)
             return Array.Empty<MetricTimeSeriesChart>();
-        const string hover =
-            "Live: X = 5-minute wall-clock bucket index (0 = first 5 min since first chart sample). Y = Σ of parsed deltas in that interval (dmg in / out / unclassified + block).";
-        var n = LiveWall5mDamageIn.Count;
+        var hover =
+            "Live: X = 5-minute wall-clock bucket index (0 = first 5 min since first chart sample). Y = Σ of parsed deltas in that interval (dmg in / out / unclassified + block). "
+            + "In-game chart shows only the last " + LiveChartDisplayMaxFiveMinuteBuckets + " buckets.";
+        var nTotal = LiveWall5mDamageIn.Count;
+        var n = Math.Min(nTotal, LiveChartDisplayMaxFiveMinuteBuckets);
+        var start = nTotal - n;
         var dIn = new double[n];
         var dOut = new double[n];
         var dUnk = new double[n];
         var blk = new double[n];
         for (var i = 0; i < n; i++)
         {
-            dIn[i] = LiveWall5mDamageIn[i];
-            dOut[i] = LiveWall5mDamageOut[i];
-            dUnk[i] = LiveWall5mDamageUnk[i];
-            blk[i] = LiveWall5mBlock[i];
+            var j = start + i;
+            dIn[i] = LiveWall5mDamageIn[j];
+            dOut[i] = LiveWall5mDamageOut[j];
+            dUnk[i] = LiveWall5mDamageUnk[j];
+            blk[i] = LiveWall5mBlock[j];
         }
 
         var wallSeries = new List<MetricTimeSeries>(4);
@@ -750,9 +794,12 @@ internal static class TelemetryMetricsStore
     {
         if (LiveCardDeltaSamples.Count < 1)
             return Array.Empty<MetricTimeSeriesChart>();
-        var n = LiveCardDeltaSamples.Count;
+        var total = LiveCardDeltaSamples.Count;
+        var n = Math.Min(total, LiveChartDisplayMaxSamples);
+        var start = total - n;
+        var window = LiveCardDeltaSamples.GetRange(start, n);
         var keyScores = new Dictionary<string, double>(StringComparer.Ordinal);
-        foreach (var sample in LiveCardDeltaSamples)
+        foreach (var sample in window)
         {
             foreach (var kv in sample)
                 keyScores[kv.Key] = keyScores.GetValueOrDefault(kv.Key) + kv.Value;
@@ -778,7 +825,7 @@ internal static class TelemetryMetricsStore
         {
             var arr = new double[n];
             for (var j = 0; j < n; j++)
-                arr[j] = LiveCardDeltaSamples[j].GetValueOrDefault(top[i]);
+                arr[j] = window[j].GetValueOrDefault(top[i]);
             var label = top[i].Length <= 42 ? top[i] : top[i][..39] + "…";
             series.Add(new MetricTimeSeries(label, colors[i % colors.Length], arr));
         }
@@ -788,19 +835,20 @@ internal static class TelemetryMetricsStore
             new MetricTimeSeriesChart(
                 "Damage Δ by card (live, play-attributed)",
                 series,
-                "Live: Y = attributed card damage gained since the previous ~1.5s chart sample (same cadence as Δ damage chart). Top 5 cards by ΣΔ over the window."),
+                "Live: Y = attributed card damage gained since the previous ~1.5s chart sample (same cadence as Δ damage chart). Top 5 cards by ΣΔ over the recent on-screen window (~"
+                + LiveChartDisplayMaxSamples + " samples)."),
         ];
     }
 
     /// <summary>Recent <see cref="HandHistory"/> as time series (all drills when hands exist).</summary>
     private static IReadOnlyList<MetricTimeSeriesChart> BuildLiveHandDetailChartsLocked()
     {
-        const int maxPts = 72;
-        const string handHover =
-            "Live: each X = one completed player energy turn (combat_player_energy_turn), oldest → newest in window. Shown whenever hand data exists (all drill tabs).";
-        var slice = HandHistory.Count <= maxPts
+        var handHover =
+            "Live: each X = one completed player energy turn (combat_player_energy_turn), oldest → newest in window. In-game chart shows only the last "
+            + LiveChartDisplayMaxHands + " hands (buffer may retain more). Shown whenever hand data exists (all drill tabs).";
+        var slice = HandHistory.Count <= LiveChartDisplayMaxHands
             ? HandHistory.ToList()
-            : HandHistory.GetRange(HandHistory.Count - maxPts, maxPts);
+            : HandHistory.GetRange(HandHistory.Count - LiveChartDisplayMaxHands, LiveChartDisplayMaxHands);
         var dmg = slice.Select(h => (double)h.DamageInHand).ToArray();
         var steps = slice.Select(h => (double)h.Steps).ToArray();
         var gain = slice.Select(h => (double)h.Gain).ToArray();
@@ -812,11 +860,11 @@ internal static class TelemetryMetricsStore
         return
         [
             new MetricTimeSeriesChart(
-                "Damage by hand (live, recent)",
+                "Damage by hand (live, last " + LiveChartDisplayMaxHands + ")",
                 [new MetricTimeSeries("Damage (Σ / hand)", new Color(1f, 0.45f, 0.38f), dmg)],
                 handHover),
             new MetricTimeSeriesChart(
-                "Energy motion by hand (live)",
+                "Energy motion by hand (live, last " + LiveChartDisplayMaxHands + ")",
                 [
                     new MetricTimeSeries("Steps / hand", new Color(0.55f, 0.92f, 0.72f), steps),
                     new MetricTimeSeries("Energy + (hand)", new Color(0.95f, 0.82f, 0.35f), gain),
@@ -824,7 +872,7 @@ internal static class TelemetryMetricsStore
                 ],
                 handHover),
             new MetricTimeSeriesChart(
-                "Damage rolling windows (live)",
+                "Damage rolling windows (live, last " + LiveChartDisplayMaxHands + " hands)",
                 [
                     new MetricTimeSeries("Last 2 hands Σ", new Color(1f, 0.62f, 0.42f), roll2),
                     new MetricTimeSeries("Last 3 hands Σ", new Color(0.95f, 0.5f, 0.55f), roll3),
@@ -836,9 +884,9 @@ internal static class TelemetryMetricsStore
     /// <summary>Same as <see cref="BuildLiveHandDetailChartsLocked"/> but only hands tagged with <paramref name="combatOrdinal"/>.</summary>
     private static IReadOnlyList<MetricTimeSeriesChart> BuildLiveHandDetailChartsForCombatLocked(int combatOrdinal)
     {
-        const int maxPts = 72;
-        const string handHover =
-            "Live: each X = one completed player energy turn in this combat only (combat_player_energy_turn), oldest → newest in window.";
+        var handHover =
+            "Live: each X = one completed player energy turn in this combat only (combat_player_energy_turn), oldest → newest in window. In-game chart shows up to the last "
+            + LiveChartDisplayMaxHands + " hands from this combat.";
         var filtered = new List<HandRollup>();
         foreach (var h in HandHistory)
         {
@@ -857,9 +905,9 @@ internal static class TelemetryMetricsStore
             ];
         }
 
-        var slice = filtered.Count <= maxPts
+        var slice = filtered.Count <= LiveChartDisplayMaxHands
             ? filtered
-            : filtered.GetRange(filtered.Count - maxPts, maxPts);
+            : filtered.GetRange(filtered.Count - LiveChartDisplayMaxHands, LiveChartDisplayMaxHands);
         var dmg = slice.Select(h => (double)h.DamageInHand).ToArray();
         var steps = slice.Select(h => (double)h.Steps).ToArray();
         var gain = slice.Select(h => (double)h.Gain).ToArray();
@@ -1826,19 +1874,20 @@ internal static class TelemetryMetricsStore
         var preferTs = maxTsPts >= 1;
         return view switch
         {
-            MetricsDrillView.Overview => BuildVisualOverviewMerged(scope, acc, filteredCharts, preferTs, datasetSummary),
-            MetricsDrillView.Run => BuildVisualRunMerged(acc, filteredCharts, preferTs, datasetSummary),
-            MetricsDrillView.Act => BuildVisualActMerged(acc, byAct, filteredCharts, preferTs, datasetSummary, drillNote),
-                MetricsDrillView.Combat => BuildVisualCombatMerged(acc, byCombat, hands, filteredCharts, preferTs, datasetSummary, drillNote),
-            MetricsDrillView.Hands => BuildVisualHandsMerged(acc, hands, filteredCharts, preferTs, datasetSummary),
-            MetricsDrillView.Multiplayer => BuildVisualMultiplayerMerged(scope, acc, filteredCharts, preferTs, datasetSummary, drillNote),
-            _ => BuildVisualOverviewMerged(scope, acc, filteredCharts, preferTs, datasetSummary),
+            MetricsDrillView.Overview => BuildVisualOverviewMerged(scope, acc, byCombat, filteredCharts, preferTs, datasetSummary),
+            MetricsDrillView.Run => BuildVisualRunMerged(acc, byCombat, filteredCharts, preferTs, datasetSummary),
+            MetricsDrillView.Act => BuildVisualActMerged(acc, byAct, byCombat, filteredCharts, preferTs, datasetSummary, drillNote),
+            MetricsDrillView.Combat => BuildVisualCombatMerged(acc, byCombat, hands, filteredCharts, preferTs, datasetSummary, drillNote),
+            MetricsDrillView.Hands => BuildVisualHandsMerged(acc, hands, byCombat, filteredCharts, preferTs, datasetSummary),
+            MetricsDrillView.Multiplayer => BuildVisualMultiplayerMerged(scope, acc, byCombat, filteredCharts, preferTs, datasetSummary, drillNote),
+            _ => BuildVisualOverviewMerged(scope, acc, byCombat, filteredCharts, preferTs, datasetSummary),
         };
     }
 
     private static MetricsVisualModel BuildVisualOverviewMerged(
         TelemetryScopeSnapshot scope,
         MetricsAccumulator acc,
+        Dictionary<int, MetricsAccumulator> byCombat,
         IReadOnlyList<MetricTimeSeriesChart> timeSeriesCharts,
         bool preferTs,
         string datasetSummary)
@@ -1855,6 +1904,7 @@ internal static class TelemetryMetricsStore
             RecordingBars = RecordingVolumeBars(acc),
             CardFlowBars = CardFlowBarsAlways(acc),
             RoomVisitBars = RoomVisitBarsFromAccumulator(acc),
+            DamageByCombatBars = BuildDamageByCombatBars(byCombat, ReplayCombatHighlightForDamageBars(byCombat)),
             TimeSeriesCharts = timeSeriesCharts,
             PreferTimeSeriesOverBars = preferTs,
             Counters = AccumulatorCounters(acc),
@@ -1876,6 +1926,7 @@ internal static class TelemetryMetricsStore
 
     private static MetricsVisualModel BuildVisualRunMerged(
         MetricsAccumulator acc,
+        Dictionary<int, MetricsAccumulator> byCombat,
         IReadOnlyList<MetricTimeSeriesChart> timeSeriesCharts,
         bool preferTs,
         string datasetSummary)
@@ -1887,6 +1938,7 @@ internal static class TelemetryMetricsStore
             RecordingBars = RecordingVolumeBars(acc),
             CardFlowBars = CardFlowBarsAlways(acc),
             RoomVisitBars = RoomVisitBarsFromAccumulator(acc),
+            DamageByCombatBars = BuildDamageByCombatBars(byCombat, ReplayCombatHighlightForDamageBars(byCombat)),
             TimeSeriesCharts = timeSeriesCharts,
             PreferTimeSeriesOverBars = preferTs,
             Counters = AccumulatorCounters(acc),
@@ -1909,6 +1961,7 @@ internal static class TelemetryMetricsStore
     private static MetricsVisualModel BuildVisualActMerged(
         MetricsAccumulator sessionAcc,
         Dictionary<string, MetricsAccumulator> byAct,
+        Dictionary<int, MetricsAccumulator> byCombat,
         IReadOnlyList<MetricTimeSeriesChart> timeSeriesCharts,
         bool preferTs,
         string datasetSummary,
@@ -1942,6 +1995,7 @@ internal static class TelemetryMetricsStore
                 Headers = headers,
                 RecordingBars = RecordingVolumeBars(acc),
                 CardFlowBars = CardFlowBarsAlways(acc),
+                DamageByCombatBars = BuildDamageByCombatBars(byCombat, ReplayCombatHighlightForDamageBars(byCombat)),
                 TimeSeriesCharts = timeSeriesCharts,
                 PreferTimeSeriesOverBars = preferTs,
                 Counters = AccumulatorCounters(acc),
@@ -1975,6 +2029,7 @@ internal static class TelemetryMetricsStore
             Headers = headers,
             RecordingBars = RecordingVolumeBars(sessionAcc),
             CardFlowBars = CardFlowBarsAlways(sessionAcc),
+            DamageByCombatBars = BuildDamageByCombatBars(byCombat, ReplayCombatHighlightForDamageBars(byCombat)),
             TimeSeriesCharts = timeSeriesCharts,
             PreferTimeSeriesOverBars = preferTs,
             Counters = counters,
@@ -2026,6 +2081,7 @@ internal static class TelemetryMetricsStore
                 Headers = headers,
                 RecordingBars = RecordingVolumeBars(acc),
                 CardFlowBars = CardFlowBarsAlways(acc),
+                DamageByCombatBars = BuildDamageByCombatBars(byCombat, u),
                 TimeSeriesCharts = combatCharts,
                 PreferTimeSeriesOverBars = preferTs,
                 Counters = AccumulatorCounters(acc),
@@ -2059,6 +2115,7 @@ internal static class TelemetryMetricsStore
             Headers = headers,
             RecordingBars = RecordingVolumeBars(sessionAcc),
             CardFlowBars = CardFlowBarsAlways(sessionAcc),
+            DamageByCombatBars = BuildDamageByCombatBars(byCombat, ReplayCombatHighlightForDamageBars(byCombat)),
             TimeSeriesCharts = timeSeriesCharts,
             PreferTimeSeriesOverBars = preferTs,
             Counters = counters,
@@ -2071,6 +2128,7 @@ internal static class TelemetryMetricsStore
     private static MetricsVisualModel BuildVisualHandsMerged(
         MetricsAccumulator acc,
         List<HandRollup> hands,
+        Dictionary<int, MetricsAccumulator> byCombat,
         IReadOnlyList<MetricTimeSeriesChart> timeSeriesCharts,
         bool preferTs,
         string datasetSummary)
@@ -2086,6 +2144,7 @@ internal static class TelemetryMetricsStore
             RecordingBars = RecordingVolumeBars(acc),
             CardFlowBars = CardFlowBarsAlways(acc),
             HandBars = points,
+            DamageByCombatBars = BuildDamageByCombatBars(byCombat, ReplayCombatHighlightForDamageBars(byCombat)),
             TimeSeriesCharts = timeSeriesCharts,
             PreferTimeSeriesOverBars = preferTs,
             Counters = AccumulatorCounters(acc),
@@ -2122,6 +2181,7 @@ internal static class TelemetryMetricsStore
     private static MetricsVisualModel BuildVisualMultiplayerMerged(
         TelemetryScopeSnapshot scope,
         MetricsAccumulator acc,
+        Dictionary<int, MetricsAccumulator> byCombat,
         IReadOnlyList<MetricTimeSeriesChart> timeSeriesCharts,
         bool preferTs,
         string datasetSummary,
@@ -2139,6 +2199,7 @@ internal static class TelemetryMetricsStore
             Headers = headers,
             RecordingBars = RecordingVolumeBars(acc),
             CardFlowBars = CardFlowBarsAlways(acc),
+            DamageByCombatBars = BuildDamageByCombatBars(byCombat, ReplayCombatHighlightForDamageBars(byCombat)),
             TimeSeriesCharts = timeSeriesCharts,
             PreferTimeSeriesOverBars = preferTs,
             Counters = AccumulatorCounters(acc),
@@ -2168,6 +2229,7 @@ internal static class TelemetryMetricsStore
             RecordingBars = RecordingVolumeBars(Session),
             CardFlowBars = CardFlowBarsAlways(Session),
             RoomVisitBars = RoomVisitBarsFromAccumulator(Session),
+            DamageByCombatBars = BuildDamageByCombatBars(ByCombat, LiveCombatHighlightForDamageBars(scope.CombatOrdinal)),
             TimeSeriesCharts = liveCharts,
             PreferTimeSeriesOverBars = livePrefer,
             Counters = AccumulatorCounters(Session),
@@ -2189,6 +2251,7 @@ internal static class TelemetryMetricsStore
             RecordingBars = RecordingVolumeBars(Session),
             CardFlowBars = CardFlowBarsAlways(Session),
             RoomVisitBars = RoomVisitBarsFromAccumulator(Session),
+            DamageByCombatBars = BuildDamageByCombatBars(ByCombat, LiveCombatHighlightForDamageBars(scope.CombatOrdinal)),
             TimeSeriesCharts = liveCharts,
             PreferTimeSeriesOverBars = livePrefer,
             Counters = AccumulatorCounters(Session),
@@ -2230,6 +2293,7 @@ internal static class TelemetryMetricsStore
                 Headers = headers,
                 RecordingBars = RecordingVolumeBars(acc),
                 CardFlowBars = CardFlowBarsAlways(acc),
+                DamageByCombatBars = BuildDamageByCombatBars(ByCombat, LiveCombatHighlightForDamageBars(scope.CombatOrdinal)),
                 TimeSeriesCharts = liveCharts,
                 PreferTimeSeriesOverBars = livePrefer,
                 Counters = AccumulatorCounters(acc),
@@ -2257,6 +2321,7 @@ internal static class TelemetryMetricsStore
             Headers = headers,
             RecordingBars = RecordingVolumeBars(Session),
             CardFlowBars = CardFlowBarsAlways(Session),
+            DamageByCombatBars = BuildDamageByCombatBars(ByCombat, LiveCombatHighlightForDamageBars(scope.CombatOrdinal)),
             TimeSeriesCharts = liveCharts,
             PreferTimeSeriesOverBars = livePrefer,
             Counters = counters,
@@ -2297,6 +2362,7 @@ internal static class TelemetryMetricsStore
                 Headers = headers,
                 RecordingBars = RecordingVolumeBars(acc),
                 CardFlowBars = CardFlowBarsAlways(acc),
+                DamageByCombatBars = BuildDamageByCombatBars(ByCombat, useOrdinal),
                 TimeSeriesCharts = combatCharts,
                 PreferTimeSeriesOverBars = livePrefer,
                 Counters = AccumulatorCounters(acc),
@@ -2324,6 +2390,9 @@ internal static class TelemetryMetricsStore
             Headers = headers,
             RecordingBars = RecordingVolumeBars(Session),
             CardFlowBars = CardFlowBarsAlways(Session),
+            DamageByCombatBars = BuildDamageByCombatBars(
+                ByCombat,
+                (pinned is { } pv && ByCombat.ContainsKey(pv)) ? pv : LiveCombatHighlightForDamageBars(scopeCombat)),
             TimeSeriesCharts = liveCharts,
             PreferTimeSeriesOverBars = livePrefer,
             Counters = counters,
@@ -2346,6 +2415,9 @@ internal static class TelemetryMetricsStore
             RecordingBars = RecordingVolumeBars(Session),
             CardFlowBars = CardFlowBarsAlways(Session),
             HandBars = points,
+            DamageByCombatBars = BuildDamageByCombatBars(
+                ByCombat,
+                LiveCombatHighlightForDamageBars(TelemetryScopeContext.Snapshot().CombatOrdinal)),
             TimeSeriesCharts = liveCharts,
             PreferTimeSeriesOverBars = livePrefer,
             Counters = AccumulatorCounters(Session),
@@ -2371,6 +2443,7 @@ internal static class TelemetryMetricsStore
             Headers = headers,
             RecordingBars = RecordingVolumeBars(Session),
             CardFlowBars = CardFlowBarsAlways(Session),
+            DamageByCombatBars = BuildDamageByCombatBars(ByCombat, LiveCombatHighlightForDamageBars(scope.CombatOrdinal)),
             TimeSeriesCharts = liveCharts,
             PreferTimeSeriesOverBars = livePrefer,
             Counters = AccumulatorCountersWithMultiplayerRollups(scope, Session),
@@ -2422,6 +2495,48 @@ internal static class TelemetryMetricsStore
             $"dmg {a.DamageDealtSum.ToString("N0", CultureInfo.InvariantCulture)} · " +
             $"blk {a.BlockGainedSum.ToString("N0", CultureInfo.InvariantCulture)} · " +
             $"plays {a.Plays.ToString("N0", CultureInfo.InvariantCulture)}");
+
+    private const int MaxDamageByCombatBars = 28;
+
+    /// <summary>
+    /// One bar per combat: Σ damage to enemy/creature victims (see <see cref="MetricsAccumulator.DamageReceivedToEnemySum"/>).
+    /// </summary>
+    private static IReadOnlyList<MetricBar> BuildDamageByCombatBars(
+        Dictionary<int, MetricsAccumulator> byCombat,
+        int? highlightOrdinal)
+    {
+        if (byCombat.Count == 0)
+            return Array.Empty<MetricBar>();
+
+        var ordered = byCombat.Keys.Order().ToList();
+        if (ordered.Count > MaxDamageByCombatBars)
+            ordered = ordered.Skip(ordered.Count - MaxDamageByCombatBars).ToList();
+
+        var baseFill = new Color(0.45f, 0.88f, 0.58f, 1f);
+        var hiFill = new Color(0.62f, 1f, 0.75f, 1f);
+        var list = new List<MetricBar>(ordered.Count);
+        foreach (var co in ordered)
+        {
+            if (!byCombat.TryGetValue(co, out var a))
+                continue;
+            var v = (double)a.DamageReceivedToEnemySum;
+            var fill = highlightOrdinal == co ? hiFill : baseFill;
+            list.Add(new MetricBar($"Combat #{co}", v, fill));
+        }
+
+        return list;
+    }
+
+    private static int? LiveCombatHighlightForDamageBars(int scopeCombatOrdinal) =>
+        scopeCombatOrdinal > 0 ? scopeCombatOrdinal : null;
+
+    private static int? ReplayCombatHighlightForDamageBars(Dictionary<int, MetricsAccumulator> byCombat)
+    {
+        var p = TelemetryCombatUiState.SelectedCombatOrdinal;
+        if (p is { } v && byCombat.ContainsKey(v))
+            return v;
+        return null;
+    }
 
     private static IReadOnlyList<MetricBar> RecordingVolumeBars(MetricsAccumulator a)
     {

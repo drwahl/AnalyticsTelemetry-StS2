@@ -108,6 +108,7 @@ internal static class CombatEnergyFlowTracker
 
         var scope = TelemetryScopeContext.Snapshot();
         var handSeq = TelemetryScopeContext.CurrentHandSequence;
+        HandCardPlayOrderTracker.FlushHand(scope.CombatOrdinal, handSeq, roundWhenEnded, endUtc);
         var turnPlayerKey = snapshot.Count > 0 ? snapshot[^1].PlayerKey : scope.LastEnergyPlayerKey;
         TelemetryEventLog.WriteRaw(
             "combat_player_energy_turn",

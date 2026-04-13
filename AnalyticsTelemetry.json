@@ -3,7 +3,7 @@
   "name": "Analytics Telemetry",
   "author": "local-dev",
   "description": "Append-only run/combat analytics log (NDJSON) for offline analysis. Does not change gameplay.",
-  "version": "v0.6.19",
+  "version": "v0.6.21",
   "has_pck": false,
   "has_dll": true,
   "dependencies": ["BaseLib"],

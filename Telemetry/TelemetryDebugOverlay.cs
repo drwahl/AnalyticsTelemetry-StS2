@@ -36,10 +36,14 @@ public static class TelemetryDebugOverlayUi
     private static Label? _logCaption;
     private static string _lastLogText = "";
     private static string _lastChartTextureSignature = "\0";
+    private static string _lastChartLayoutSignature = "\0";
+    private static ulong _nextChartTextureEligibleTicksMsec;
     private static string _lastVolatileUiSignature = "\0";
     /// <summary>Caps metrics UI rebuild rate — full chart textures were hot when combined with volatile counters.</summary>
     private static ulong _metricsRefreshEarliestTicksMsec;
-    private const ulong MetricsPaneMinRefreshIntervalMsec = 450;
+    private const ulong MetricsPaneMinRefreshIntervalMsec = 900;
+    private static ulong _logPreviewEarliestTicksMsec;
+    private const ulong LogPreviewMinPollIntervalMsec = 200;
     private static CheckButton? _showFullDetailCheck;
     private static CheckButton? _showRecentEventsCheck;
     private static CheckButton? _rawNdjsonCheck;
@@ -1088,13 +1092,20 @@ public static class TelemetryDebugOverlayUi
         }
     }
 
+    private static void BustMetricsPaneSignatures()
+    {
+        _lastChartTextureSignature = "\0";
+        _lastChartLayoutSignature = "\0";
+        _nextChartTextureEligibleTicksMsec = 0;
+        _lastVolatileUiSignature = "\0";
+    }
+
     private static void OnCompactMetricsPanelToggled(bool pressed)
     {
         TelemetryMetricsUiPreferences.CompactPanel = pressed;
         TelemetryMetricsUiPreferences.SaveToDisk();
         ApplyMetricsPanelLayout();
-        _lastChartTextureSignature = "\0";
-        _lastVolatileUiSignature = "\0";
+        BustMetricsPaneSignatures();
         RefreshMetricsPane(scrollMetricsToTop: true);
     }
 
@@ -1102,8 +1113,7 @@ public static class TelemetryDebugOverlayUi
     {
         TelemetryMetricsUiPreferences.SleekCharts = pressed;
         TelemetryMetricsUiPreferences.SaveToDisk();
-        _lastChartTextureSignature = "\0";
-        _lastVolatileUiSignature = "\0";
+        BustMetricsPaneSignatures();
         RefreshMetricsPane(scrollMetricsToTop: true);
     }
 
@@ -1111,8 +1121,7 @@ public static class TelemetryDebugOverlayUi
     {
         TelemetryMetricsUiPreferences.ChartHover = pressed;
         TelemetryMetricsUiPreferences.SaveToDisk();
-        _lastChartTextureSignature = "\0";
-        _lastVolatileUiSignature = "\0";
+        BustMetricsPaneSignatures();
         RefreshMetricsPane(scrollMetricsToTop: true);
     }
 
@@ -1120,8 +1129,7 @@ public static class TelemetryDebugOverlayUi
     {
         TelemetryMetricsUiPreferences.ShowLiveThroughputChart = pressed;
         TelemetryMetricsUiPreferences.SaveToDisk();
-        _lastChartTextureSignature = "\0";
-        _lastVolatileUiSignature = "\0";
+        BustMetricsPaneSignatures();
         RefreshMetricsPane(scrollMetricsToTop: true);
     }
 
@@ -1139,15 +1147,13 @@ public static class TelemetryDebugOverlayUi
         _dmgChartUnkCheck.ButtonPressed = TelemetryMetricsUiPreferences.ShowChartDamageUnk;
         _dmgChartBlockCheck.ButtonPressed = TelemetryMetricsUiPreferences.ShowChartBlock;
         TelemetryMetricsUiPreferences.SaveToDisk();
-        _lastChartTextureSignature = "\0";
-        _lastVolatileUiSignature = "\0";
+        BustMetricsPaneSignatures();
         RefreshMetricsPane(scrollMetricsToTop: false);
     }
 
     private static void OnOverlayDisplayToggled(bool _pressed)
     {
-        _lastChartTextureSignature = "\0";
-        _lastVolatileUiSignature = "\0";
+        BustMetricsPaneSignatures();
         RefreshMetricsPane(scrollMetricsToTop: true);
         _lastLogText = "";
     }
@@ -1169,6 +1175,9 @@ public static class TelemetryDebugOverlayUi
             _logLabel.Visible = visible;
             _logLabel.CustomMinimumSize = visible ? new Vector2(0, 140) : new Vector2(0, 0);
         }
+
+        if (visible)
+            _logPreviewEarliestTicksMsec = 0;
     }
 
     private static void RefreshMetricsPane(bool scrollMetricsToTop)
@@ -1193,32 +1202,48 @@ public static class TelemetryDebugOverlayUi
             $"|dI{TelemetryMetricsUiPreferences.ShowChartDamageIn}|dO{TelemetryMetricsUiPreferences.ShowChartDamageOut}|dU{TelemetryMetricsUiPreferences.ShowChartDamageUnk}|dB{TelemetryMetricsUiPreferences.ShowChartBlock}" +
             $"|ctd{combatTargetSig}";
         var chartSig = model.ChartTextureSignature() + "|" + uiSig;
+        var chartLayoutSig = model.ChartLayoutSignature() + "|" + uiSig;
         var volSig = model.VolatileUiSignature(includeDetail);
-        if (chartSig == _lastChartTextureSignature && volSig == _lastVolatileUiSignature && !scrollMetricsToTop)
+        var plan = MetricsUiRefreshPolicy.DecideWithThrottledChartTextures(
+            chartSig,
+            chartLayoutSig,
+            volSig,
+            _lastChartTextureSignature,
+            _lastChartLayoutSignature,
+            _lastVolatileUiSignature,
+            scrollMetricsToTop,
+            now,
+            ref _nextChartTextureEligibleTicksMsec);
+        if (plan == MetricsUiRefreshKind.Noop)
         {
             SyncDrillTargetButtons();
             return;
         }
 
-        if (scrollMetricsToTop || chartSig != _lastChartTextureSignature)
+        if (plan == MetricsUiRefreshKind.FullRebuild)
         {
-            _lastChartTextureSignature = chartSig;
-            _lastVolatileUiSignature = volSig;
-            MetricsVisualPanelFactory.Rebuild(
-                _metricsVisualHost,
-                model,
-                compactDetail: !includeDetail,
-                TelemetryMetricsUiPreferences.PresentationOptions);
-        }
-        else if (volSig != _lastVolatileUiSignature)
-        {
-            if (!MetricsVisualPanelFactory.TryRefreshVolatileOnly(
+            var chartDataOnly = MetricsUiRefreshPolicy.ShouldUseInPlaceChartTextureSwap(
+                scrollMetricsToTop,
+                chartLayoutSig,
+                _lastChartLayoutSignature,
+                chartSig,
+                _lastChartTextureSignature,
+                volSig,
+                _lastVolatileUiSignature);
+
+            if (chartDataOnly
+                && MetricsVisualPanelFactory.TrySwapTimeSeriesChartTextures(
                     _metricsVisualHost,
                     model,
                     compactDetail: !includeDetail,
                     TelemetryMetricsUiPreferences.PresentationOptions))
             {
                 _lastChartTextureSignature = chartSig;
+            }
+            else
+            {
+                _lastChartTextureSignature = chartSig;
+                _lastChartLayoutSignature = chartLayoutSig;
                 _lastVolatileUiSignature = volSig;
                 MetricsVisualPanelFactory.Rebuild(
                     _metricsVisualHost,
@@ -1226,7 +1251,26 @@ public static class TelemetryDebugOverlayUi
                     compactDetail: !includeDetail,
                     TelemetryMetricsUiPreferences.PresentationOptions);
             }
-            else
+        }
+        else if (plan == MetricsUiRefreshKind.VolatileOnly)
+        {
+            if (!MetricsVisualPanelFactory.TryRefreshVolatileOnly(
+                    _metricsVisualHost,
+                    model,
+                    compactDetail: !includeDetail,
+                    TelemetryMetricsUiPreferences.PresentationOptions,
+                    out var rebuiltTail))
+            {
+                _lastChartTextureSignature = chartSig;
+                _lastChartLayoutSignature = chartLayoutSig;
+                _lastVolatileUiSignature = volSig;
+                MetricsVisualPanelFactory.Rebuild(
+                    _metricsVisualHost,
+                    model,
+                    compactDetail: !includeDetail,
+                    TelemetryMetricsUiPreferences.PresentationOptions);
+            }
+            else if (rebuiltTail)
                 _lastVolatileUiSignature = volSig;
         }
 
@@ -1246,8 +1290,7 @@ public static class TelemetryDebugOverlayUi
     {
         TelemetryMetricsStore.ClearAllHistoricMetrics();
         TelemetryEventLog.ClearRecentUiLines();
-        _lastChartTextureSignature = "";
-        _lastVolatileUiSignature = "";
+        BustMetricsPaneSignatures();
         _lastLogText = "";
         if (_logLabel is not null)
             _logLabel.Text = "";
@@ -1263,6 +1306,11 @@ public static class TelemetryDebugOverlayUi
 
         if (_showRecentEventsCheck?.ButtonPressed != true || _logLabel is null || !_logLabel.Visible)
             return;
+
+        var now = Time.GetTicksMsec();
+        if (now < _logPreviewEarliestTicksMsec)
+            return;
+        _logPreviewEarliestTicksMsec = now + LogPreviewMinPollIntervalMsec;
 
         var raw = _rawNdjsonCheck?.ButtonPressed == true;
         var lines = TelemetryEventLog.GetRecentLinesForDisplay(raw);

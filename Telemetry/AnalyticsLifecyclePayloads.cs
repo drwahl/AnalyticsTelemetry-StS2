@@ -35,3 +35,12 @@ public sealed record CombatStartedPayload(
 public sealed record CombatEndedPayload(
     [property: JsonPropertyName("combatOrdinal")] int CombatOrdinal,
     [property: JsonPropertyName("durationSeconds")] double? DurationSeconds);
+
+/// <summary>Time on the map from screen visible (next path choice) until travel to a node begins.</summary>
+public sealed record MapPathDecisionPayload(
+    [property: JsonPropertyName("decisionMs")] double DecisionMs,
+    [property: JsonPropertyName("actIndex")] int ActIndex,
+    [property: JsonPropertyName("actId")] string ActId,
+    [property: JsonPropertyName("mapDepth")] int MapDepth,
+    [property: JsonPropertyName("combatOrdinal")] int CombatOrdinal,
+    [property: JsonPropertyName("runMode")] string RunMode);

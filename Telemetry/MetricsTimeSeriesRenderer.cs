@@ -1,4 +1,3 @@
-using System.Linq;
 using Godot;
 
 namespace AnalyticsTelemetry.Telemetry;
@@ -15,6 +14,8 @@ internal static class MetricsTimeSeriesRenderer
 
     internal static int PlotMarginLeft => MarginL;
     internal static int PlotMarginRight => MarginR;
+    internal static int PlotMarginTop => MarginT;
+    internal static int PlotMarginBottom => MarginB;
 
     /// <summary>Builds a texture or returns null if there is nothing meaningful to draw.</summary>
     public static ImageTexture? TryBuildChart(
@@ -48,6 +49,9 @@ internal static class MetricsTimeSeriesRenderer
         if (plotW < 8 || plotH < 8)
             return null;
 
+        var chartDataMax = MetricsTimeSeriesMath.ComputeSharedSeriesDataMax(series);
+        var denom = MetricsTimeSeriesMath.ChartNormalizeDenominator(chartDataMax);
+
         DrawGrid(img, width, height, plotW, plotH, sleekVisuals);
 
         var thick = sleekVisuals ? Math.Max(1, lineThickness) : lineThickness;
@@ -55,7 +59,7 @@ internal static class MetricsTimeSeriesRenderer
         {
             if (s.Values.Count < 1)
                 continue;
-            var pts = NormalizePoints(s.Values, n, plotW, plotH);
+            var pts = NormalizePoints(s.Values, n, plotW, plotH, denom);
             DrawPolyline(img, pts, s.Stroke, width, height, thick);
         }
 
@@ -70,7 +74,11 @@ internal static class MetricsTimeSeriesRenderer
         for (var i = 0; i <= 4; i++)
         {
             var y = MarginT + (int)(plotH * (i / 4f));
-            HLine(img, MarginL, width - MarginR, y, g);
+            // Slightly stronger line at vertical middle (50% of plot) for orientation.
+            var lineCol = i == 2
+                ? (sleek ? new Color(0.16f, 0.17f, 0.2f, 0.75f) : new Color(0.28f, 0.31f, 0.36f, 1f))
+                : g;
+            HLine(img, MarginL, width - MarginR, y, lineCol);
         }
 
         for (var i = 0; i <= 6; i++)
@@ -80,17 +88,14 @@ internal static class MetricsTimeSeriesRenderer
         }
     }
 
-    private static Vector2[] NormalizePoints(IReadOnlyList<double> values, int targetLen, int plotW, int plotH)
+    private static Vector2[] NormalizePoints(IReadOnlyList<double> values, int targetLen, int plotW, int plotH, double yDenom)
     {
-        var max = values.Max();
-        if (max < 1e-6)
-            max = 1;
         var pts = new Vector2[targetLen];
         for (var i = 0; i < targetLen; i++)
         {
             var v = i < values.Count ? values[i] : values[^1];
             var nx = targetLen <= 1 ? 0 : i / (float)(targetLen - 1);
-            var ny = (float)Math.Clamp(v / max, 0, 1);
+            var ny = (float)Math.Clamp(v / yDenom, 0, 1);
             pts[i] = new Vector2(
                 MarginL + nx * plotW,
                 MarginT + plotH - ny * plotH);

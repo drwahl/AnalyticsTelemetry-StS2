@@ -36,6 +36,9 @@ internal static class CombatHistoryEntryTelemetry
 
         CardDamageAttributionTracker.ProcessEntry(entry, fields);
 
+        if (entry is CardPlayStartedEntry)
+            HandCardPlayOrderTracker.OnCardPlayStarted(fields, occurredUtc);
+
         TelemetryEventLog.WriteRaw(
             eventType,
             new CombatHistoryEntryPayload(entryType.Name, entry.ToString(), fields, analytics, statusEffect),

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Linq;
 using Godot;
 
@@ -15,6 +16,13 @@ internal static class MetricsVisualPanelFactory
     private static readonly Color BarTrackColor = new(0.12f, 0.13f, 0.15f, 1f);
     private static readonly Color ValueColor = new(0.96f, 0.97f, 0.92f);
 
+    /// <summary>Caps how often bars/grids/detail under charts are torn down and rebuilt during <see cref="TryRefreshVolatileOnly"/>.</summary>
+    private static ulong _nextVolatileTailRebuildEligibleTicksMsec;
+    private const ulong VolatileTailMinRebuildIntervalMsec = 1200;
+
+    private const string TsCardNamePrefix = "TelemetryTsCard";
+    private const string YAxisHintsNodeName = "TelemetryYAxisHints";
+
     /// <param name="compactDetail">When true (in-run overlay), omit the large duplicate text block at the bottom.</param>
     public static void Rebuild(
         Control host,
@@ -23,6 +31,7 @@ internal static class MetricsVisualPanelFactory
         MetricsVisualUiOptions? presentation = null)
     {
         var pres = presentation ?? TelemetryMetricsUiPreferences.PresentationOptions;
+        _nextVolatileTailRebuildEligibleTicksMsec = 0;
         foreach (var child in host.GetChildren())
             child.Free();
 
@@ -49,12 +58,15 @@ internal static class MetricsVisualPanelFactory
     }
 
     /// <summary>Re-headers + bars + grids + detail without rebuilding chart textures (huge FPS win in combat).</summary>
+    /// <param name="rebuiltHeavyVolatileTail">False when the bars/grids/detail rebuild was skipped due to throttling; callers must not advance their last volatile signature in that case.</param>
     public static bool TryRefreshVolatileOnly(
         Control host,
         MetricsVisualModel model,
-        bool compactDetail = false,
-        MetricsVisualUiOptions? presentation = null)
+        bool compactDetail,
+        MetricsVisualUiOptions? presentation,
+        out bool rebuiltHeavyVolatileTail)
     {
+        rebuiltHeavyVolatileTail = false;
         var pres = presentation ?? TelemetryMetricsUiPreferences.PresentationOptions;
         if (host.GetChildCount() == 0)
             return false;
@@ -66,14 +78,19 @@ internal static class MetricsVisualPanelFactory
         if (headers is null || charts is null || vol is null)
             return false;
 
-        foreach (var c in headers.GetChildren())
-            c.Free();
+        // Do not free headers first — <see cref="AddHeaderLabels"/> updates existing labels in place when counts match.
         AddHeaderLabels(headers, model, compactDetail);
 
         var anyTsTexture = ChartsHostHasRenderableTimeSeries(charts, model);
+        var now = Time.GetTicksMsec();
+        if (now < _nextVolatileTailRebuildEligibleTicksMsec)
+            return true;
+
+        _nextVolatileTailRebuildEligibleTicksMsec = now + VolatileTailMinRebuildIntervalMsec;
         foreach (var c in vol.GetChildren())
             c.Free();
         PopulateVolatileTail(vol, model, compactDetail, pres, anyTsTexture);
+        rebuiltHeavyVolatileTail = true;
         return true;
     }
 
@@ -141,6 +158,90 @@ internal static class MetricsVisualPanelFactory
     private static bool ModelLikelyHasTimeSeriesPlot(MetricsVisualModel model) =>
         model.TimeSeriesCharts.Any(c => c.Series.Any(s => s.Values.Count >= 1));
 
+    /// <summary>Left-side Y labels: one shared 0…max for all lines on this chart (each graph has its own scale).</summary>
+    private static void AddChartYAxisHints(
+        Control parent,
+        int chartH,
+        IReadOnlyList<MetricTimeSeries> series,
+        bool sleek,
+        bool compact)
+    {
+        var mt = MetricsTimeSeriesRenderer.PlotMarginTop;
+        var mb = MetricsTimeSeriesRenderer.PlotMarginBottom;
+        var plotH = chartH - mt - mb;
+        if (plotH < 14)
+            return;
+
+        var stale = parent.FindChild(YAxisHintsNodeName, false, false);
+        stale?.Free();
+
+        var dataMax = MetricsTimeSeriesMath.ComputeSharedSeriesDataMax(series);
+        var denom = MetricsTimeSeriesMath.ChartNormalizeDenominator(dataMax);
+        var flat = dataMax < 1e-12;
+
+        var layer = new Control
+        {
+            Name = YAxisHintsNodeName,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        layer.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        layer.OffsetRight = layer.OffsetLeft = layer.OffsetTop = layer.OffsetBottom = 0;
+        layer.TooltipText = flat
+            ? "All lines on this chart share one vertical scale; values in the window are ~0."
+            : "All lines on this chart share one vertical scale: top = largest value among every line in this window ("
+              + FormatChartAxisNumber(denom, compact)
+              + "), bottom = 0. Other charts use their own scale.";
+
+        var hintColor = sleek
+            ? new Color(0.58f, 0.62f, 0.68f, 0.92f)
+            : new Color(0.72f, 0.76f, 0.8f, 0.96f);
+        var fs = compact ? 8 : 9;
+
+        void AddLabel(string text, float y)
+        {
+            var lab = new Label
+            {
+                Text = text,
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+                Position = new Vector2(3, y),
+            };
+            lab.AddThemeFontSizeOverride("font_size", fs);
+            lab.AddThemeColorOverride("font_color", hintColor);
+            layer.AddChild(lab);
+        }
+
+        if (flat)
+        {
+            AddLabel("0", mt);
+            AddLabel("0", mt + plotH * 0.5f - fs * 0.55f);
+            AddLabel("0", chartH - mb - fs - 2);
+        }
+        else
+        {
+            AddLabel(FormatChartAxisNumber(denom, compact), mt);
+            AddLabel(FormatChartAxisNumber(denom * 0.5, compact), mt + plotH * 0.5f - fs * 0.55f);
+            AddLabel("0", chartH - mb - fs - 2);
+        }
+
+        parent.AddChild(layer);
+    }
+
+    private static string FormatChartAxisNumber(double v, bool compact)
+    {
+        if (double.IsNaN(v) || double.IsInfinity(v))
+            return "—";
+        if (Math.Abs(v) < 1e-15)
+            return "0";
+        var ax = Math.Abs(v);
+        if (Math.Abs(v - Math.Round(v)) < 1e-9 && ax < 2e15)
+            return ((long)Math.Round(v)).ToString(compact ? "0" : "N0", CultureInfo.InvariantCulture);
+        if (ax >= 1000)
+            return v.ToString("0", CultureInfo.InvariantCulture);
+        if (ax >= 10)
+            return v.ToString("0.#", CultureInfo.InvariantCulture);
+        return v.ToString(compact ? "0.##" : "0.###", CultureInfo.InvariantCulture);
+    }
+
     /// <summary>Builds timeseries textures into <paramref name="chartsHost"/>; returns whether any chart drew.</summary>
     private static bool PopulateTimeSeriesCharts(
         VBoxContainer chartsHost,
@@ -153,6 +254,7 @@ internal static class MetricsVisualPanelFactory
         var anyTsTexture = false;
         if (model.TimeSeriesCharts.Count == 0)
             return false;
+        var tsCardSlot = 0;
         foreach (var chartModel in model.TimeSeriesCharts)
         {
             var tex = MetricsTimeSeriesRenderer.TryBuildChart(
@@ -177,7 +279,8 @@ internal static class MetricsVisualPanelFactory
             sub.AddThemeColorOverride("font_color", MutedColor);
             chartsHost.AddChild(sub);
 
-            var card = new PanelContainer();
+            var card = new PanelContainer { Name = $"{TsCardNamePrefix}_{tsCardSlot}" };
+            tsCardSlot++;
             card.AddThemeStyleboxOverride("panel", ChartFrameStyleBox(pres.SleekCharts));
             var inner = new Control
             {
@@ -193,6 +296,7 @@ internal static class MetricsVisualPanelFactory
             chart.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             chart.OffsetRight = chart.OffsetLeft = chart.OffsetTop = chart.OffsetBottom = 0;
             inner.AddChild(chart);
+            AddChartYAxisHints(inner, chartH, chartModel.Series, pres.SleekCharts, pres.CompactCharts);
             if (pres.InteractiveHover)
             {
                 var catcher = new ChartHoverCatcher(
@@ -200,8 +304,7 @@ internal static class MetricsVisualPanelFactory
                     chartW,
                     chartH,
                     MetricsTimeSeriesRenderer.PlotMarginLeft,
-                    MetricsTimeSeriesRenderer.PlotMarginRight,
-                    chartModel.HoverFootnote);
+                    MetricsTimeSeriesRenderer.PlotMarginRight);
                 catcher.SetAnchorsPreset(Control.LayoutPreset.FullRect);
                 catcher.OffsetRight = catcher.OffsetLeft = catcher.OffsetTop = catcher.OffsetBottom = 0;
                 inner.AddChild(catcher);
@@ -216,8 +319,8 @@ internal static class MetricsVisualPanelFactory
             var leg = new Label
             {
                 Text = pres.CompactCharts
-                    ? "Hover chart for values. Live = Δ / sample; replay = per 5 min."
-                    : "Each line scaled to its own max. Live: Δ since previous sample (~1.5s or burst). Replay: totals per 5‑minute wall-clock bucket.",
+                    ? "Hover chart for values. Each graph: shared 0…max across its lines. Live = Δ / sample; replay = per 5 min."
+                    : "Each graph uses one vertical scale for all lines on that chart (0 to the max value in the window). Live: Δ since previous sample (~1.5s or burst). Replay: totals per 5‑minute wall-clock bucket.",
                 AutowrapMode = TextServer.AutowrapMode.WordSmart,
             };
             leg.AddThemeFontSizeOverride("font_size", compactDetail || pres.CompactCharts ? 10 : 11);
@@ -226,6 +329,78 @@ internal static class MetricsVisualPanelFactory
         }
 
         return anyTsTexture;
+    }
+
+    /// <summary>
+    /// Re-rasterizes time-series chart textures in-place (same <see cref="PanelContainer"/> nodes). Skips the full
+    /// <see cref="Rebuild"/> tree tear-down that causes multi-hundred-ms hitches when only sample data changed.
+    /// </summary>
+    public static bool TrySwapTimeSeriesChartTextures(
+        Control host,
+        MetricsVisualModel model,
+        bool compactDetail,
+        MetricsVisualUiOptions? presentation)
+    {
+        var pres = presentation ?? TelemetryMetricsUiPreferences.PresentationOptions;
+        if (host.GetChildCount() == 0)
+            return false;
+        if (host.GetChild(0) is not VBoxContainer root || root.Name != "MetricsVisualRoot")
+            return false;
+        if (root.FindChild(NodeChartsHost, false, false) is not VBoxContainer chartsHost)
+            return false;
+        if (model.TimeSeriesCharts.Count == 0)
+            return false;
+
+        var chartW = pres.CompactCharts ? 232 : (compactDetail ? 280 : 320);
+        var chartH = pres.CompactCharts ? 56 : (compactDetail ? 84 : 100);
+        var slot = 0;
+
+        foreach (var chartModel in model.TimeSeriesCharts)
+        {
+            var tex = MetricsTimeSeriesRenderer.TryBuildChart(
+                chartModel.Series,
+                width: chartW,
+                height: chartH,
+                sleekVisuals: pres.SleekCharts);
+            if (tex is null)
+                continue;
+
+            if (chartsHost.FindChild($"{TsCardNamePrefix}_{slot}", false, false) is not PanelContainer card)
+                return false;
+            if (card.GetChildCount() < 1 || card.GetChild(0) is not Control inner)
+                return false;
+            if (inner.GetChildCount() < 1 || inner.GetChild(0) is not TextureRect tr)
+                return false;
+
+            if (tr.Texture is ImageTexture oldTex)
+                oldTex.Dispose();
+            tr.Texture = tex;
+
+            foreach (var c in inner.GetChildren())
+            {
+                if (c is ChartHoverCatcher oldC)
+                    oldC.Free();
+            }
+
+            AddChartYAxisHints(inner, chartH, chartModel.Series, pres.SleekCharts, pres.CompactCharts);
+
+            if (pres.InteractiveHover)
+            {
+                var catcher = new ChartHoverCatcher(
+                    chartModel.Series,
+                    chartW,
+                    chartH,
+                    MetricsTimeSeriesRenderer.PlotMarginLeft,
+                    MetricsTimeSeriesRenderer.PlotMarginRight);
+                catcher.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                catcher.OffsetRight = catcher.OffsetLeft = catcher.OffsetTop = catcher.OffsetBottom = 0;
+                inner.AddChild(catcher);
+            }
+
+            slot++;
+        }
+
+        return slot > 0;
     }
 
     private static void PopulateVolatileTail(
@@ -253,6 +428,23 @@ internal static class MetricsVisualPanelFactory
             var maxC = BarListMax(model.CardFlowBars);
             foreach (var b in model.CardFlowBars)
                 AddAnchoredBarRow(root, b.Label, b.Value, maxC, b.Fill, compactDetail);
+        }
+
+        if (model.DamageByCombatBars.Count > 0)
+        {
+            AddSectionCaption(root, "Damage to enemies by combat", compactDetail);
+            var hint = new Label
+            {
+                Text =
+                    "Σ HP lost by enemy/creature victims per combat from combat_history_damage_received (same “dmg out” classification as the live Δ chart). Brighter bar = pinned or current combat when applicable. Oldest combat at top, newest at bottom; only the last several combats are listed if the run is long.",
+                AutowrapMode = TextServer.AutowrapMode.WordSmart,
+            };
+            hint.AddThemeFontSizeOverride("font_size", compactDetail ? 10 : 11);
+            hint.AddThemeColorOverride("font_color", MutedColor);
+            root.AddChild(hint);
+            var maxD = BarListMax(model.DamageByCombatBars);
+            foreach (var b in model.DamageByCombatBars)
+                AddAnchoredBarRow(root, b.Label, b.Value, maxD, b.Fill, compactDetail);
         }
 
         if (model.CardDamageLeaders.Count > 0)

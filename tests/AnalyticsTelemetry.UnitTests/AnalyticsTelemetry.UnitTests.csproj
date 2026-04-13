@@ -18,5 +18,6 @@
   <ItemGroup>
     <Compile Include="..\..\Telemetry\MetricsVisualModel.cs" Link="MetricsVisualModel.cs" />
     <Compile Include="..\..\Telemetry\MetricsTimeSeriesMath.cs" Link="MetricsTimeSeriesMath.cs" />
+    <Compile Include="..\..\Telemetry\MetricsUiRefreshPolicy.cs" Link="MetricsUiRefreshPolicy.cs" />
   </ItemGroup>
 </Project>

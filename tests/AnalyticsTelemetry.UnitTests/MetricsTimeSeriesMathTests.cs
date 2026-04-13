@@ -109,4 +109,48 @@ public sealed class MetricsTimeSeriesMathTests
             Assert.Equal(25.0, mid, precision: 10);
         }
     }
+
+    public sealed class SeriesWindowMaxTests
+    {
+        [Fact]
+        public void ComputeSeriesWindowMax_finds_largest_value()
+        {
+            Assert.Equal(12.0, MetricsTimeSeriesMath.ComputeSeriesWindowMax(new[] { 1.0, 5.0, 12.0, 3.0 }));
+        }
+
+        [Fact]
+        public void ComputeSeriesWindowMax_empty_is_zero()
+        {
+            Assert.Equal(0.0, MetricsTimeSeriesMath.ComputeSeriesWindowMax(Array.Empty<double>()));
+        }
+
+        [Theory]
+        [InlineData(0, 1)]
+        [InlineData(1e-7, 1)]
+        [InlineData(3, 3)]
+        public void ChartNormalizeDenominator_matches_renderer_epsilon(double dataMax, double expected)
+        {
+            Assert.Equal(expected, MetricsTimeSeriesMath.ChartNormalizeDenominator(dataMax));
+        }
+    }
+
+    public sealed class SharedPerChartYScaleTests
+    {
+        [Fact]
+        public void ComputeSharedSeriesDataMax_is_max_across_all_lines_on_that_chart()
+        {
+            var series = new[]
+            {
+                Ts("a", 1, 5),
+                Ts("b", 3, 4, 12),
+            };
+            Assert.Equal(12.0, MetricsTimeSeriesMath.ComputeSharedSeriesDataMax(series));
+        }
+
+        [Fact]
+        public void ComputeSharedSeriesDataMax_empty_series_list_is_zero()
+        {
+            Assert.Equal(0.0, MetricsTimeSeriesMath.ComputeSharedSeriesDataMax(Array.Empty<MetricTimeSeries>()));
+        }
+    }
 }

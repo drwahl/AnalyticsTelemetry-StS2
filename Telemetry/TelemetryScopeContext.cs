@@ -39,6 +39,8 @@ internal static class TelemetryScopeContext
             _combatStartUtc = null;
             _lastEnergyPlayerKey = null;
         }
+
+        MapPathDecisionTelemetry.ResetForNewSession();
     }
 
     internal static void SetRunSaveMeta(string mode, string? accountKey, string? profileFolder)

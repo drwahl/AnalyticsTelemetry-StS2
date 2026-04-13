@@ -2,7 +2,7 @@
     <Import Project=".\Sts2PathDiscovery.props"/>
     <PropertyGroup>
         <!-- Semver for the DLL; keep in sync with AnalyticsTelemetry.json "version" (drop the leading v in json when comparing). -->
-        <Version>0.6.19</Version>
+        <Version>0.6.21</Version>
         <TargetFramework>net9.0</TargetFramework>
         <!-- Godot.NET.Sdk already emits AssemblyInfo / TFM attributes; disable SDK duplicates (CS0579). -->
         <GenerateAssemblyInfo>false</GenerateAssemblyInfo>

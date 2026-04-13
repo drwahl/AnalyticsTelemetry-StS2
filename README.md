@@ -42,7 +42,7 @@ dotnet publish -c Release
 
 ## Automated tests
 
-Does not require the game install or BaseLib (uses `GodotSharp` on NuGet only for `Godot.Color` in shared model types). Covers `MetricsVisualModel` signatures and `MetricsTimeSeriesMath` (sample count + hover interpolation):
+Does not require the game install or BaseLib (uses `GodotSharp` on NuGet only for `Godot.Color` in shared model types). Covers `MetricsVisualModel` signatures, `MetricsTimeSeriesMath`, and **`MetricsUiRefreshPolicy`** — the overlay must use **volatile-only** refresh when counters/headers change but chart textures do not; CI catches wiring mistakes that previously caused **full chart rebuild every tick** (severe FPS loss). This is a **policy** regression test, not an in-game FPS benchmark.
 
 ```bash
 dotnet test tests/AnalyticsTelemetry.UnitTests/AnalyticsTelemetry.UnitTests.csproj -c Release
@@ -74,6 +74,8 @@ Steam account folder names are not written verbatim; a short hash is used in pay
 
 - `combat_started` / `combat_ended` — postfix on `CombatManager.StartCombatInternal` / `EndCombatInternal` (ordinal + act/map snapshot + optional wall duration).
 - `combat_player_energy_turn` — includes `combatOrdinal`, `handSequence`, `playerKey` (from `Player.NetId`), plus per-step `playerKey` on energy mutations.
+- `hand_card_play_order` — one line per **player segment** that produced a `combat_player_energy_turn` (same `handSequence`): ordered `plays` from each `CardPlayStarted` in combat-history order (`order` 1…N, `cardDisplay`, `playerKey` when parsable from entry fields for MP, `occurredUtc`). In multiplayer, interleaved plays follow the game’s combat history order. If the fight ends with buffered plays but no final energy flush, a closing line is emitted on `combat_ended`. Raw `combat_history_card_play_*` lines still carry full reflection `properties`.
+- `map_path_decision` — wall time spent choosing the **next** map node: from when `NMapScreen` becomes visible (or `OnMapScreenVisibilityChanged`, with `_Notification` visibility as fallback) until **`TravelToMapCoord`** runs. Payload: `decisionMs`, `actIndex`, `actId`, `mapDepth`, `combatOrdinal`, `runMode`. **Does not** include reward/event screens before the map appears; it measures only the interval after the map UI is shown until you commit to a path.
 
 ### In-game metrics panel (drill-down)
 
